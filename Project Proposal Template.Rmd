@@ -1,0 +1,38 @@
+---
+title: "Project Proposal"
+author: "STOR 320.02 Group 6 (Ex: STOR 320.01 Group 12)"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+# Project Roles
+
+- **Creator:** JING HU
+- **Interpreter 1:** HALIMA MOHAMED
+- **Interpreter 2:** PATRICK SCHMITT
+- **Orator 1:** THI LE
+- **Orator 2:** JORDAN BEAN
+- **Deliverer:** AKSHAY WALAVALKAR
+
+# Dataset
+
+[https://www.kaggle.com/mrpantherson/board-game-data?select=bgg_db_2018_01.csv] (URL_HYPERLINK_TO_WEBSITE_WHERE_DATA_IS)
+
+# Initial Questions
+
+- **Question 1:** What are the names and ranks of the top fifteen games that have the greatest discrepancy between their Geek Rating and average rating?
+- **Question 2:** How does the estimated minimum and maximum time required to play a game vary based on its minimum recommended number of players?
+- **Question 3:** How many games (if any) were published before the 20th century, and what is their average Geek Rating?
+- **Question 4:** What are the top five most common game categories that the hundred highest ranked games fall under?
+- **Question 5:** Do games with lower complexity have higher or lower average ratings?
+- **Question 6:** How is a game's average rating related to the number of people who own it?
+- **Question 7:** Does the complexity of a game correlate with its minimum recommended number of players?
+- **Question 8:** What is the most common game mechanic for each group of games with the same minimum recommended age?
+- **Question 9:** What is the relationship between a game's minimum recommended number of players and it's Geek Rating?
+- **Question 10:** Are older published games generally more or less complex than newer published games?
+
