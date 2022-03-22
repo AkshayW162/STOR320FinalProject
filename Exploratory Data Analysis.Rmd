@@ -1,0 +1,220 @@
+---
+title: "G6: Exploratory Data Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(tidyverse) 
+```
+
+```{r}
+bgg.orginal <- read_csv("bgg.csv")
+```
+
+#cleaning the data 
+
+```{r}
+data = bgg.orginal %>%
+  filter(year> 1799, max_players > 0, min_players > 0  )
+all_categories = vector(mode='character',length=0)
+library("stringr")
+library("dplyr")
+
+for (i in 1:nrow(data)) {
+  categories = unlist(strsplit(str_replace_all(data$category[i]," ",""), ","))
+  #print(categories)
+  for (k in 1:length(categories)) {
+    all_categories = c(all_categories,categories[k])
+  }
+}
+all_categories = unique(all_categories)
+all_categories
+head(data) 
+```
+# Halima Q1
+Question 1: What are the names and ranks of the top fifteen games that have the greatest discrepancy between their Geek Rating and average rating?
+```{r}
+data.1 = data %>%
+  mutate(GeekAverg= abs(geek_rating- avg_rating)) %>% #create a variable that calculates the difference between the Greek and avg rating
+  arrange(desc(GeekAverg)) %>% # sort by the new variable in a descending order 
+  select(4,1,21) %>% #select variables of interest
+  head(15) # select the top 15 observation
+data.1
+```
+# Discussion Q1
+Looking at the rank of theses 15 games we see that they have larger values for rank, they fall in to the 25th percentile. 
+Does that mean the bigger the gab between Greek_rating and Average_rating the worst the ranking gets? 
+Here we only looked at the absolute vale of the difference between  Greek_rating and Average_rating, are we going to get different results if we consider directions?
+discussion 
+
+
+# Halima Q2
+Question 2: How does the estimated minimum and maximum time required to play a game vary based on its minimum recommended number of players?
+
+```{r}
+data.2= data %>%
+  mutate( min_players= as.factor(min_players))
+ggplot(data=filter(data.2, min_time <10000,max_time< 10000)) +
+  geom_point(mapping = aes(x = min_time, y = max_time, color = min_players))
+ggplot(data=filter(data.2, min_time <100,max_time< 100)) +
+  geom_point(mapping = aes(x = min_time, y = max_time, color = min_players))
+```
+
+# Discussion Q2:
+The minimum recommended number of players does not vary with the the recommended minimum and maximum play time. Only few games recommend more than 3 players. It might worth it to examine these games and check their characterization and the things they have in common.
+
+#Q3
+Q3: How many games (if any) were published before the 20th century, and what is their average Geek Rating?
+```{r}
+data.Q3 = data %>%
+  filter(year<1900) %>%
+  summarize(
+    mean.GreekR=mean(geek_rating,na.rm=T)
+  )
+data.Q3
+```
+
+# Discussion Q3:
+
+
+#Q4
+Q4: What are the top five most common game categories that the hundred highest ranked games fall under?
+
+
+
+# Discussion Q4:
+
+#Q5
+Question 5: Do games with lower complexity have higher or lower average ratings?
+```{r}
+ggplot(data, aes(weight, avg_rating)) + 
+    geom_point() + 
+    geom_smooth(se=F, method=lm)
+```
+# Discussion Q5:
+The linear regression line shows that there is a correlation between more complex games and its rating. However, the relationship is not strong.
+
+#Q6
+Question 6: How is a game’s average rating related to the number of people who own it?
+
+```{r}
+ggplot(filter(data, owned <= 5000), aes(avg_rating, owned)) + 
+    geom_point() + 
+    geom_smooth(se=F, method=lm)
+ggplot(data=filter(data,owned < 1000) ) +
+  geom_point(mapping = aes(x = avg_rating, y = owned))
+```
+# Discussion Q6:
+Games with higher rating aren't necessarily owned by more people. In fact, there is negative relationship here, albeit weak. Tying this back to the question about higher rating games have higher difficulty, we can ask if people are less inclined to own games that are more difficult. It is likely that they want to have friendly games that can be played and caught up by everyone of different ages and levels.
+
+#Q7
+Question 7: Does the complexity of a game correlate with its minimum recommended number of players?
+```{r}
+cor(data$weight, data$ min_players)
+```
+
+
+#Q8
+Question 8: What is the most common game mechanic for each group of games with the same minimum recommended age?
+```{r}
+data %>%
+  group_by(mechanic, age) %>%
+  summarize(n=n() ) %>% 
+  arrange(desc(n))
+```
+# Discussion Q8:
+
+#Q9
+Question 9: What is the relationship between a game’s minimum recommended number of players and it’s Geek Rating?
+```{r}
+ggplot(data=data) +
+  geom_point(mapping = aes(x = min_players, y = geek_rating))
+```
+
+```{r}
+ggplot(data, aes(group=min_players,y=geek_rating)) + geom_boxplot()
+ggplot(data, aes(x=as.character(min_players),y=geek_rating)) + geom_violin()+labs(x="min_players")
+```
+There seems to be a minor trend of games with minimums of >=6 players having higher ratings than other games.
+```{r}
+sixormore = filter(data,between(min_players,6,8))
+nrow(sixormore)
+```
+However there are only 11 such games, so this is probably not very significant.
+
+
+#Q10
+Question 10: Are older published games generally more or less complex than newer published games?
+
+```{r}
+data = mutate(data,years_past=2022-year)
+min(data$years_past)
+```
+This data is 4 years old. Adjusting so years_past starts at zero
+```{r}
+data = mutate(data,years_past=years_past-4)
+head(arrange(select(data,names,years_past),desc(years_past)))
+```
+There are ancient games in the data set. Filtering to recent games
+
+```{r}
+recentgames = filter(data,years_past<=80)
+recentgames = mutate(recentgames,avg_players=(min_players+max_players)/2)
+ggplot(recentgames,aes(years_past)) + geom_bar()
+```
+
+```{r}
+by_year = recentgames %>%
+  group_by(years_past) %>%
+  summarize(n=nrow(weight), mean.weight=mean(weight,na.rm=T), sd.weight=sd(weight,na.rm=T))
+
+ggplot(recentgames, aes(group=years_past, y=weight)) + geom_boxplot()
+ggplot(by_year, aes(x=years_past,y=mean.weight)) + geom_line()
+```
+
+```{r}
+nrow(filter(recentgames,years_past>40))
+nrow(filter(recentgames,years_past<=40))
+```
+There are only 127 games more than 40 years old, while there are 4795 less than 40 years old, so games more than 40 years old are too sparse to do meaningful modeling of.
+
+```{r}
+veryrecentgames = filter(recentgames,years_past<40)
+model = lm(weight~years_past,veryrecentgames)
+summary(model)
+```
+There is a significant but not at all explanatory relationship of lessening complexity as time goes on for the last 40 years.
+
+## Follow Up Questions: 
+#Q1: Does category relate to average weight/complexity?
+#Q2: What's the average minimum age for games that are most likely owned?
+#Q3: What are the best variables to predict _avg_rating_? 
+#Q4: What are the best variables to predict _avg_time_?
+create a model to predict avg_time
+
+
+#ANSWERES
+Q2: What's the average minimum age for games that are most likely owned?  
+```{r}
+ranked_owned = data[order(data$owned),]
+ggplot(ranked_owned, aes(owned, age)) + 
+    geom_point() +
+    geom_smooth(se=F, method=lm)
+```
+Q4: What are the best variables to predict _avg_time_?
+```{r}
+data.m1= select(data,1,5:13, 15, 17,20 )
+data.model= filter(data,avg_time<1000)
+ggplot(data= data.model) +
+  geom_point(mapping = aes(x = avg_rating, y = avg_time))
+ggplot(data= data.model) +
+  geom_point(mapping = aes(x = geek_rating, y = avg_time))
+ggplot(data= data.model) +
+  geom_point(mapping = aes(x = rank, y = avg_time))
+```
+
