@@ -1,0 +1,463 @@
+---
+title: "Exploratory Data Analysis"
+author: "STOR 320.02 (01 OR 02) Group 6 (Ex: STOR 320.01 Group 12)"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(stringr)
+library(sjmisc)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+# Import Data Below
+bgg.orginal = read_csv("bgg.csv", col_names = T) 
+```
+
+#Data Cleaning
+```{r}
+data = bgg.orginal %>%
+  filter(
+    # Removes observations that are incorrectly recorded
+    min_players<=max_players, # The maximum number of recommended players cannot logically be less than the minimum number of recommended players
+    min_time<=max_time, # The maximum estimated play time cannot logically be less than the minimum estimated play time
+    between(weight, 1, 5), # Weight is calculated by averaging votes from a scale of 1-5, thus we remove observations where the weight is less than 1 or greater than 5.
+    # Removes "games" that stand in as miscellaneous categories for the data; These are not board games; They only act as generalized placeholders and thus are irrelevant to our analysis
+    names!="Unpublished Prototype", 
+    names!="Miscellaneous Game Accessory", 
+    names!="Traditional Card Games", 
+    names!="Outside the Scope of BGG"
+    ) %>%  
+  select(!c(bgg_url, game_id, image_url, designer)) %>%  # The url variables cannot be used in a data analysis, and game_id & designer are not relevant to our data analysis
+  rename(name=names,year_pubd=year, min_age=age, mechanics=mechanic, num_owned=owned, categories=category, complexity=weight) # Renames variables to accurately reflect their utility
+
+# Based on the data source, values of 0 for the following variables indicate that the publisher did not provide data or that data for the variable was unavailable; Since the data is numeric, a "0" entry might be misconstrued as an acceptable value, thus we convert 0 to NA to properly reflect this.
+data$min_players = replace(data$min_players, data$min_players==0, NA) # 0 players cannot play a game; this is missing data
+data$max_players = replace(data$max_players, data$max_players==0, NA) # 0 players cannot play a game; this is missing data
+data$min_age = replace(data$min_age, data$min_age==0, NA) # Someone who is 0 years old cannot play a game; this is missing data
+data$year_pubd = replace(data$year_pubd, data$year_pubd==0, NA) # These games have no confirmed initial publication date; this is unavailable data
+
+glimpse(data)
+```
+
+#Generating additional data; Creates data that are used to analyze game mechanics and categories
+```{r}
+all_categories = vector(mode='character',length=0)
+all_mechanics = vector(mode='character',length=0)
+for (i in 1:nrow(data)) { # Splits the categories and mechanics for one game into individual substrings
+  categories = unlist(strsplit(str_replace_all(data$categories[i]," ",""), ","))  
+  mechanics = unlist(strsplit(str_replace_all(data$mechanics[i]," ",""), ",")) 
+  # Compiles the categories and mechanics seen from each game
+  for (j in 1:length(categories)) { 
+    all_categories = c(all_categories,categories[j]) 
+  }
+  for (k in 1:length(mechanics)) {
+    all_mechanics = c(all_mechanics,mechanics[k]) 
+  }
+}
+
+# Lists contain every possible game category and mechanic; removes "none" to account for games that have no recorded mechanics or categories
+all_categories = unique(all_categories)[unique(all_categories)!="none"]
+all_mechanics = unique(all_mechanics)[unique(all_mechanics)!="none"]
+```
+
+# Creator: JING HU
+
+### Q1: How many games (if any) were published before the 20th century, and what is their average Geek Rating?
+
+```{r}
+before_1990 = data %>%
+  filter(year_pubd<1900) %>%
+  summarize("# of Games Published Before 1900"=n(),
+            "Average Geek Rating"=mean(geek_rating,na.rm=T)) %>% 
+  kbl() %>%
+  kable_styling(bootstrap_options = "striped", font_size = 13, fixed_thead=T) %>% 
+  kable_classic(full_width = F) %>% 
+  row_spec(0, font_size=15, bold=T) %>% 
+  row_spec(1, align=c("c"))
+
+before_1990
+```
+#Discussion/Notes:
+Based on the table, 31 games were published before the 20th century, and their average Geek Rating is 6.15828. Since there are so few games published before the 20th century (and their average rating is fairly low) relative to the rest of the data, we should probably consider these games outliers in a predictive analysis and disregard them.
+
+### Q2: What are the top five most common game categories that the hundred highest ranked games fall under?
+
+```{r}
+top_100 = head(arrange(data, rank, desc=T), 100) # The top 100 highest ranked games
+category_by_count = data.frame(category=character(), count=numeric()) # Declaring data frame
+for (i in 1:length(all_categories)) { # Loops through all possible categories
+  cat_amount = 0 # Resets counter for next category
+  for (j in 1:nrow(top_100)) { # Increments the counter if a game contains the current category
+    if (str_contains(str_replace_all(data$categories[j]," ",""),all_categories[i])) {
+      cat_amount = cat_amount + 1
+    }
+  }
+  category_by_count = add_row(category_by_count,category=all_categories[i],count=cat_amount) # Adds row to data frame based on the current category and counter
+}
+category_by_count = head(arrange(category_by_count,desc(count)), 5) # Top 5 categories
+
+ggplot(data=category_by_count, mapping=aes(x=category, y=count, color=category)) +
+  geom_point(size=2.5, show.legend = F) +
+  geom_col(mapping=aes(), size=1.3, show.legend = F)+
+  geom_text(aes(label=count, y=count+1.5), color="black") +
+  labs(title="Top 5 Most Common Board Game Categories",
+       caption="Based on the Top 100 Board Games",
+       x="Category",
+       y="Frequency") +
+  theme(plot.title=element_text(size = 23),
+        plot.caption=element_text(color="gray30", face="italic"),
+        axis.title=element_text(size=13.5),
+        axis.text=element_text(color="gray25"))
+```
+
+#Discussion/Notes:
+Based on the graph, we can see that the top five most common game categories that the hundred highest ranked games fall under are "Economic", "Fantasy", "Fighting", "Science Fiction", and "Adventure", in that order. This suggests that games with these categories may be likely to be more popular, but we cannot know for sure without further deterministic analysis. This might be interesting to look at in our follow up analysis with all the games and categories included.
+
+# Interpreter: HALIMA MOHAMED
+
+### Q1: What are the names and ranks of the top fifteen games that have the greatest discrepancy between their Geek Rating and average rating?
+
+```{r}
+top_fifteen_diff = data %>%
+  mutate(rat_diff = abs(geek_rating - avg_rating)) %>% # Creates a variable that calculates the difference between the Geek and average rating
+  arrange(desc(rat_diff)) %>% # Sort by the new variable in a descending order 
+  select(name,rank,rat_diff) %>% # Select variables of interest
+  rename("Name of Board Game"=name, "Rank"=rank, "Rating Discrepancy"=rat_diff) %>% # Renames variables for output clarity 
+  head(15) %>%  # Select the top 15 observation
+  kbl() %>%
+  kable_styling(bootstrap_options = "striped", font_size = 13, fixed_thead=T) %>% 
+  kable_classic(full_width = F) %>% 
+  row_spec(0, font_size=15, bold=T)
+top_fifteen_diff
+```
+#Discussion/Notes:
+The names of the top fifteen games that have the greatest discrepancy between their Geek Rating and average rating are "Time of Legends: Joan of Arc", "Dungeon Degenerates: Hand of Doom", "Aristeia!", "Last Chance for Victory", "Commands & Colors Tricorne", "Tenkatoitsu", "BattleCON: Trials of Indines", "Last Blitzkrieg", "The Greatest Day: Sword, Juno, and Gold Beaches", "Techno Bowl: Arcade Football Unplugged", "La Bataille de la Moscowa (third edition)", "Battlestations: Second Edition", "The Battle of Fontenoy: 11 May, 1745", "Holland '44: Operation Market-Garden", and "Bios: Megafauna (second edition)", in that order. Their ranks of these games are 4269, 4223, 4711, 3260, 4674, 4514, 3815, 3696, 3503, 2873, 3175, 3963, 4111, 3444, and 4897, respectively. Looking at the rank of these fifteen games we see that they ranked relatively low. We know from the data source that a game's Geek Rating is based on standardizing its average rating by introducing dummy votes that skew the game's rating toward the average of all games in the dataset to account for unreliable ratings. Since these games have the largest discrepancy between their Geek and average rating, it suggests that they had to be greatly standardized, indicating that they likely had a large number of unreliable positive votes since they are rated so low. However, we cannot confirm this without ranking all the games by their average rating and comparing it to their current rank, which we might want to consider in the follow up analysis.
+
+### Q2: How does the estimated minimum and maximum time required to play a game vary based on its minimum recommended number of players?
+
+```{r}
+provided_mins = filter(data, !is.na(min_players)) # Dataset without missing recommended minimum player values
+
+# Creates boxplots with outlier values colored red and zooms in on the first few outliers
+ggplot(data=provided_mins, aes(x=min_time)) +
+  geom_boxplot(outlier.color = "red", outlier.size=3) +
+  coord_cartesian(xlim=c(100,300),ylim=c(-0.1,0.1)) +
+  labs(title="First Outliers for Minimum Estimated Play Time",
+       x="Minimum Time") +
+  theme(plot.title=element_text(size=17),
+        axis.title=element_text(size=11))
+ggplot(data=provided_mins, aes(x=max_time)) +
+  geom_boxplot(outlier.color = "red", outlier.size=3) +
+  coord_cartesian(xlim=c(150,350),ylim=c(-0.1,0.1)) +
+  labs(title="First Outliers for Maximum Estimated Play Time",
+       x="Maximum Time") +
+  theme(plot.title=element_text(size=17),
+        axis.title=element_text(size=11))
+
+minmax_time_players = provided_mins %>%
+  filter(min_time<200, max_time<=250) %>% # Removes outlier observations based on the earlier boxplots
+  group_by(min_players) %>%
+  # Creates variables that represent the average minimum and maximum time for each player category for comparison
+  summarize(avg_min_time=mean(min_time, na.rm=T),
+            avg_max_time=mean(max_time, na.rm=T)) %>% 
+  mutate(avg_min_time=paste(as.character(round(avg_min_time, 3))," minutes"),
+         avg_max_time=paste(as.character(round(avg_max_time, 3))," minutes")) %>% 
+  rename("Minimum Recommended Players"=min_players,
+         "Average Estimated Minimum Play Time"=avg_min_time,
+         "Average Estimated Maximum Play Time"=avg_max_time) %>%  # Renames variables for output clarity
+  kbl() %>%
+  kable_styling(bootstrap_options = "striped", font_size = 13, fixed_thead=T) %>% 
+  kable_classic(full_width = F) %>% 
+  row_spec(0, font_size=15, bold=T) %>% 
+  row_spec(1:7, align=c("c"))
+
+minmax_time_players
+```
+#Discussion/Notes:
+There is a fairly weak negative relationship between these two variables based on the values seen in the table. Based on this, we can say that the estimated minimum and maximum time required to play a game GENERALLY decreases as its minimum recommended number of players increases, and vice versa. However, we cannot determine if this is a causal relationship without further analysis. Additionally, since there are so few recommended minimum player categories, it may not be worth exploring the causality of this relationship anyway, since the correlation might be likened to the lack of min_player variation (as seen in the 3rd and 7th row of the table where both average minimum and maximum time increased from the previous row).
+
+# Orator 1: THI LE
+
+### Q1: Do games with lower complexity have higher or lower average ratings?
+
+```{r}
+ggplot(data, mapping=aes(x=complexity, y=avg_rating)) +
+  geom_point(color="mediumslateblue") +
+  geom_smooth(formula = y ~ x, se=F, method=lm, color="red") +
+  annotate("text", x=4.77, y=8.3, label="Correlation:", col="red") +
+  annotate("text", x=4.77, y=8.1, label=as.character(round(cor(data$complexity, data$avg_rating),digits=10)), col="red") +
+  labs(title="Average Rating of Board Games by their Complexity",
+       x="Game Complexity",
+       y="Average Rating") +
+  theme(plot.title=element_text(size=20),
+        axis.title=element_text(size=13))
+```
+
+#Discussion/Notes:
+The graph's linear regression line and correlation coefficient show that there is a moderately strong positive correlation between the average rating of a board game and its complexity. This relationship is neither substantially strong nor substantially weak. Based on this, we can say that games with lower complexity GENERALLY have lower average ratings. However, we cannot determine if this is a causal relationship without further analysis. Since there is sufficient data to create this relationship and potentially analyze it with statistical significance, we should consider further analysis in our follow up.
+
+### Q2: How is a game's average rating related to the number of people who own it?
+
+```{r}
+# Creates a boxplot with outlier values colored red and zooms in on the first few outliers
+ggplot(data=data, aes(x=avg_rating, y=num_owned, group=1)) + # group=1 removes the grouping warning, does not affect output
+  geom_boxplot(outlier.color = "red", outlier.size=3) +
+  coord_flip(xlim=c(7,8), ylim=c(5500,5750)) +
+  labs(title="First Outliers",
+       x="Number of People who Own A Game",
+       y="Average Rating") +
+  theme(plot.title=element_text(size=17),
+        axis.title=element_text(size=11))
+
+# Based on the boxplot, we can see that outliers are present in data where num_owned>5600. We use this information to exclude outliers in our scatterplot and regression line
+ggplot(filter(data, num_owned<=5600), aes(x=num_owned, y=avg_rating)) + 
+  geom_point(color="seagreen3") +
+  geom_smooth(formula = y ~ x, se=F, method=lm, color="red") +
+  annotate("text", x=5380, y=7.35, label="Correlation:", col="red") +
+  annotate("text", x=5380, y=7.15, label=as.character(round(cor(data$num_owned, data$avg_rating),digits=10)), col="red") +
+  labs(title="Average Rating of Board Games by the Number of People that Own It",
+       x="Number of People who Own A Game",
+       y="Average Rating") +
+  scale_x_continuous(breaks=c(0,1000,2000,3000,4000,5000)) +
+  theme(plot.title=element_text(size=15),
+        axis.title=element_text(size=12))
+```
+
+#Discussion/Notes:
+The graph's linear regression line and correlation coefficient show that there is a negligibly positive relationship between a board game's average rating and the number of people that own it. This relationship is so weak it can probably not be considered statistically significant, indicating that there is no relationship between the two variables. Based on this, we can say that a game's average rating is not related to the number of people who own it. This is an interesting discovery and might be worth attempting to discover why these variables are unrelated in the follow up analysis.
+
+# Orator 2: PATRICK SCHMITT
+
+### Q1: What is the relationship between a game's minimum recommended number of players and it's Geek Rating?
+
+```{r}
+provided_mins = filter(data, !is.na(min_players)) # Dataset without missing recommended minimum player values
+ggplot(provided_mins, aes(x=as.character(min_players),y=geek_rating, group=min_players)) + 
+  geom_boxplot(color="orange2", size=.75, outlier.colour="darkviolet") +
+  labs(title="Distribution of Geek Rating by the Minimum Recommended Number of Players",
+       x="Minimum Recommended Number of Players",
+       y="Geek Rating") +
+  theme(axis.title=element_text(size=11))
+
+ggplot(provided_mins, aes(x=as.character(min_players),y=geek_rating)) +
+  geom_violin(color="orange2", size=.75) +
+  labs(title="Distribution of Geek Rating by the Minimum Recommended Number of Players",
+       x="Minimum Recommended Number of Players",
+       y="Geek Rating") +
+  theme(axis.title=element_text(size=11))
+
+nrow(filter(provided_mins, between(min_players,6,8))) # Displays the number of observations for which the min rec player amount is 6 or 8 
+```
+
+#Discussion/Notes:
+Based on the graphs, there seems to be an incredibly weak relationship between these two variables. The graphs display a tighter variation and marginally higher geek ratings for games with more than 5 minimum recommended players, but this seems to be offset by the outliers in the earlier minimum player categories. Based on the number of rows in the table, we know that there are only 11 Geek Rating observations for minimum players of 6 and 8, and thus we can likely disregard this data. Based on this, we can say that there is no relationship between a game's minimum recommended number of players and its Geek Rating. Additionally, since there are so few recommended minimum player categories and overall observations, the relationship seems weak and may not be worth exploring in the follow up analysis.
+
+### Q2: Are older published games generally more or less complex than newer published games?
+
+```{r}
+# 2018 is used as the "current" year during calculations since the original data was collected in 2018
+old_data = filter(mutate(data, years_past=2018-year_pubd), year_pubd!=0)
+
+# Creates a boxplot with outlier values colored red and zooms in on the first few outliers
+ggplot(data=old_data, aes(x=complexity, y=years_past, group=1)) + # group=1 removes the grouping warning, does not affect output
+  geom_boxplot(outlier.color = "red", outlier.size=3) +
+  coord_flip(xlim=c(2.5,3.5), ylim=c(30,35)) +
+  labs(title="First Outliers",
+       x="Game Complexity",
+       y="# of Years Published before 2018") +
+  theme(plot.title=element_text(size=17),
+        axis.title=element_text(size=11))
+
+# Based on the boxplot, we can see that outliers are present in data where years_past>31. We use this information to exclude outliers when creating data for a scatterplot and regression line
+relevant_games = filter(old_data, years_past<=31)
+ggplot(relevant_games) + 
+  geom_boxplot(aes(x=year_pubd, y=complexity, group=year_pubd), color="dodgerblue1", outlier.color="blue3") +
+  geom_smooth(mapping=aes(x=year_pubd, y=complexity), formula = y ~ x, se=F, method=lm, color="red") +
+  annotate("text", x=2017.1, y=2.15, label="Correlation:", col="red") +
+  annotate("text", x=2017.1, y=1.95, label=as.character(round(cor(relevant_games$complexity, relevant_games$year_pubd),digits=10)), col="red") +
+  labs(title="Complexity Distribution of Board Games by Year of Publication",
+       x="Year of Publication",
+       y="Game Complexity") +
+  scale_x_continuous(breaks=c(1990,1995,2000,2005,2010,2015)) +
+  theme(plot.title=element_text(size=17),
+        axis.title=element_text(size=12))
+```
+
+#Discussion/Notes:
+The graph's linear regression line and correlation coefficient show that there is an incredibly weak negative relationship between a board game's year of publication and the complexity of the game. Based on this, we can say that older published games are GENERALLY very slightly more complex than newer published games. However, This relationship is so weak it can probably not be considered statistically significant, indicating that there is likely no actual relationship between the two variables. Using this reasoning, we can more reasonably say that older published games are GENERALLY just as complex as newer published games. Further analysis might more accurately predict this relationship and would be interesting to explore in order to determine why game complexity has remained relatively stable over time (if that is the case in the follow up analysis).
+
+# Deliverer: AKSHAY WALAVALKAR
+
+### Q1: Does the complexity of a game correlate with its minimum recommended number of players?
+
+```{r}
+provided_mins = filter(data, !is.na(min_players)) # Dataset without missing recommended minimum player values
+ggplot(data=provided_mins) + 
+    geom_boxplot(mapping=aes(x=min_players, y=complexity, group=min_players), size=.75, color="lightseagreen", outlier.colour="navyblue") + 
+    geom_smooth(aes(x=min_players, y=complexity),formula = y ~ x, se=F, method=lm, color="red") +
+    annotate("text", x=6.85, y=1.0, label="Correlation:", col="red") +
+    annotate("text", x=6.85, y=0.8, label=as.character(round(cor(provided_mins$complexity, provided_mins$min_players),digits=10)), col="red") +
+    labs(title="Complexity Distribution of Board Games by Minimum Recommended Players",
+         x="Minimum Recommended Number of Players",
+         y="Game Complexity") +
+    scale_x_continuous(breaks=c(1,2,3,4,5,6,7,8)) +
+    theme(axis.title=element_text(size=12))
+```
+
+#Discussion/Notes:
+The graph's linear regression line and correlation coefficient show that there is a relatively weak negative relationship between a board game's minimum recommended number of players and the complexity of the game. Based on this, we can say that the complexity of a game GENERALLY does correlate with its minimum recommended number of players (eg. as the number of minimum recommended players increases, the complexity of the game generally decreases). However, there are very few observations for games with >5 minimum recommended players, and none at all for a minimum of 7. Since the data is so limited, the relationship between complexity and minimum recommended players is likely unstable and not worth analyzing in a follow up analysis.
+
+### Q2: What is the most common game mechanic for each group of games with the same minimum recommended age?
+
+```{r}
+provided_ages = filter(data, !is.na(min_age)) %>% group_by(min_age) # Dataset without missing recommended minimum age values
+
+all_age_groups = unique(provided_ages$min_age) # All the age groups in the dataset
+mechanics_by_age = data.frame(age=numeric(), common=character()) # Declaring most common mechanic by age table
+mechanics_by_count = data.frame(mechanics=character(), count=numeric()) # Declaring general mechanic counter table
+
+for (i in 1:length(all_age_groups)) { # Loops through each age group
+  age_group = all_age_groups[i]
+  current_age_data = filter(provided_ages, min_age==age_group) # Filters data to only include current age group
+  for (j in 1:length(all_mechanics)) { # Loops through all possible mechanics 
+    mech_amount = 0
+    for (k in 1:nrow(current_age_data)) { # Increments the counter if a game contains the current mechanic
+      if (str_contains(str_replace_all(current_age_data$mechanics[k]," ",""), all_mechanics[j])) {
+        mech_amount = mech_amount + 1
+      }
+    }
+    mechanics_by_count = add_row(mechanics_by_count,mechanics=all_mechanics[j],count=mech_amount) # Adds row to data frame based on the current mechanic and counter
+  }
+  most_common = paste(filter(mechanics_by_count, count==max(mechanics_by_count$count))$mechanics, collapse=", ") # Finds the most common mechanic for the age group
+  mechanics_by_age = add_row(mechanics_by_age, age=age_group, common=most_common) # Adds row to data frame based on age group and most common mechanic
+  mechanics_by_count = data.frame(mechanics=character(), count=numeric()) # Resets the general mechanic counter table
+}
+
+mechanics_by_age %>% 
+  arrange(age) %>% 
+  mutate(age=paste(as.character(age)," Years Old")) %>%
+  rename("Minimum Recommended Age Group"=age, "Most Common Board Game Mechanics"=common) %>% # Renames variables for output clarity
+  kbl(align = c("r", "l")) %>%
+  kable_styling(bootstrap_options = "striped", font_size = 13, fixed_thead=T, ) %>% 
+  kable_classic(full_width=F) %>% 
+  row_spec(0, font_size=15, bold=T, align=c("l")) %>% 
+  column_spec(1, border_right=T) %>% 
+  column_spec(2, width="23em")
+```
+
+#Discussion/Notes:
+Based on the table, we can see that there are nineteen groups of games with the same minimum recommended age. These groups are age 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, and 42. The most common mechanics for each group are "Co-operativePlay" & "DiceRolling"; "Co-operativePlay"; "Co-operativePlay", "DiceRolling" & "Memory"; "DiceRolling"; "DiceRolling"; "HandManagement"; "HandManagement"; "HandManagement"; "HandManagement"; "ModularBoard"; "DiceRolling"; "HandManagement"; "DiceRolling"; "Deck/PoolBuilding"; "Hex-and-Counter"; "Co-operativePlay" & "HandManagement"; "HandManagement"; "HandManagement", "CardDrafting", "AreaControl/AreaInfluence", "Campaign/BattleCardDriven", "Route/NetworkBuilding", "PatternBuilding", & "Pick-upandDeliver"; "Auction/Bidding" & "StockHolding", respectively. Some groups cleary have multiple most common mechanics. Hand Management and Dice Rolling seem to be very popular mechanics. This is a very interesting development, and might be interesting to further analyze in a predictive model using other variables.
+
+# Follow-up Questions
+
+### New Questions Based Off Initial Investigation
+
+- Q1: Does category relate to average weight/complexity?
+- Q2: What's the average minimum age for games that are most likely owned?
+- Q3: What are the best variables to predict the _avg_rating_ of a Board Game?  
+- Q4: What are the best variables to predict the _avg_time_ of a Board Game?
+
+### Investigation of Follow-up Questions
+
+GIVE WHAT 2 QUESTIONS YOU ATTEMPTED TO INVESTIGATE FURTHER IN COMPLETE SENTENCES (*Example:* Our group decided to investigate Q2 and Q4 in further detail.)
+
+Our group decided to investigate Q3 and Q4 in further detail.
+
+SHOW AT LEAST 2 TABLES OR FIGURES BELOW THAT EXPLORE ANSWERS FOR THE QUESTIONS YOU ARE INVESTIGATING FURTHER.
+
+#Q3: What are the best variables to predict the _avg_rating_ of a Board Game?
+```{r}
+# We are most interested in the effects of publication year and estimated average time on average rating because we hypothesize these might be the best predictors of average rating, so we first want to know if there is a correlation, and if so, how strong. Weak correlations indicate a probably weak predictor variable.
+
+model_data1 = filter(data, !is.na(min_players), !is.na(max_players), !is.na(min_age), !is.na(year_pubd))
+
+# Filter is based on outliers found in Halima's Q2 of the Initial Questions
+time_alt = filter(model_data1, min_time<200, max_time<=250)
+ggplot(data=time_alt, aes(x=avg_time, y=avg_rating)) + 
+  geom_smooth(formula = y ~ x, method=lm, se=F, color="red") +
+  annotate("text", x=150, y=7.5, label="Correlation:", col="red") +
+  annotate("text", x=150, y=7.44, label=as.character(round(cor(time_alt$avg_time, time_alt$avg_rating),digits=10)), col="red") +
+  labs(title="Average Rating based on Estimated Average Play Time Regression Line",
+       x="Estimated Average Play Time",
+       y="Average Rating") +
+  theme(plot.title=element_text(size=14),
+        axis.title=element_text(size=12))
+
+# Filter is based on outliers found in Patrick's Q2 of the Initial Questions
+year_alt = filter(model_data1, year_pubd>=1987)
+ggplot(data=year_alt, aes(x=year_pubd, y=avg_rating)) + 
+  geom_smooth(formula = y ~ x, method=lm, se=F, color="red") + 
+  annotate("text", x=2005, y=7.0, label="Correlation:", col="red") +
+  annotate("text", x=2005, y=6.96, label=as.character(round(cor(year_alt$year_pubd, year_alt$avg_rating),digits=10)), col="red") +
+  labs(title="Average Rating based on Year of Publication Regression Line",
+       x="Year of Publication",
+       y="Average Rating") +
+  theme(plot.title=element_text(size=14),
+        axis.title=element_text(size=12))
+```
+
+Q4: What are the best variables to predict the _avg_time_ of a Board Game?
+```{r}
+# We are most interested in the effects of publication year and game complexity on average estimated play time because we hypothesize these might be the best predictors of estimated average play time, so we first want to know if there is a correlation, and if so, how strong. Weak correlations indicate a probably weak predictor variable.
+
+# Time filter is based on outliers found in Halima's Q2 of the Initial Questions
+model_data2 = filter(data, !is.na(min_players),
+                    !is.na(max_players),
+                    !is.na(min_age),
+                    !is.na(year_pubd),
+                    min_time<200,
+                    max_time<=250)
+
+ggplot(data=model_data2, aes(x=complexity, y=avg_time)) + 
+  geom_smooth(formula = y ~ x, method=lm, se=F, color="red") +
+  annotate("text", x=3, y=140, label="Correlation:", col="red") +
+  annotate("text", x=3, y=132, label=as.character(round(cor(model_data2$complexity, model_data2$avg_time),digits=10)), col="red") +
+  labs(title="Estimated Average Play Time based on Game Complexity Regression Line",
+       x="Game Complexity",
+       y="Estimated Average Play Time") +
+  theme(plot.title=element_text(size=14),
+        axis.title=element_text(size=12))
+
+# Filter is based on outliers found in Patrick's Q2 of the Initial Questions
+year_alt = filter(model_data2, year_pubd>=1987)
+ggplot(data=year_alt, aes(x=year_pubd, y=avg_time)) +
+  geom_smooth(formula = y ~ x, method=lm, se=F, color="red") +
+  annotate("text", x=2005, y=70, label="Correlation:", col="red") +
+  annotate("text", x=2005, y=69.4, label=as.character(round(cor(year_alt$year_pubd, year_alt$avg_time),digits=10)), col="red") +
+  labs(title="Estimated Average Play Time based on Year of Publication Regression Line",
+       x="Year of Publication",
+       y="Estimated Average Play Time") +
+  theme(plot.title=element_text(size=14),
+        axis.title=element_text(size=12))
+```
+
+# Summary
+
+GIVE A 2 PARAGRAPH SUMMARY. 
+
+PARAGRAPH 1 SHOULD DESCRIBE WHAT YOU LEARNED ABOUT YOUR DATA FROM INVESTIGATING THE INITIAL QUESTIONS. DID YOU FIND ANYTHING UNUSUAL IN YOUR DATA? DID ANYTHING SURPRISE YOU? WHICH OF THE INITIAL QUESTIONS WERE HELPFUL IN LEADING YOU TO MORE QUESTIONS?
+
+Our initial questions helped us narrow down variables that appeared to be the most effective in terms of establishing relevant relationships. An example of this is when we learned how few games were published before the 20th century, indicating to us that we should likely disregard those games in further analysis as their statistics are likely outdated. Some other things we learned are: the majority of board games were published after 1987, the minimum number of recommended players for a board game tends to be less than 5, the complexity of board games has remained relatively stable over time, popularly owned games are not necessarily better rated, and Hand Management/Dice Rolling are very popular mechanics for board games. The most unusual thing we discovered in our data is that there is a game who's minimum recommended player age is 42 years old (South African Railroads)! We are unsure if this is simply a scraping error from the original source, but the game appears to be very difficult to play based on the source data and certainly does not appear to be mechanically made for children. We were surprised to learn that "Economic" was the most popular board game category among the top 100 highest ranked games, as it does not seem to be a very engaging topic for a hands-on recreational activity such as playing board games, at first glance. Every one of the initial questions were useful in leading us to more questions, as they all gave us information about the relationships (or lack of) between variables. However, Thi's Q1 resulted in establishing a fairly strong positive relationship between game complexity and average rating, which led us to want to explore the ways average rating could be predicted without massive polling. We also decided to explore how the estimated average time could be predicted after seeing the results of Halima's Q2, since it might be useful for a player to know how long they would spend playing a game on average without input from the publisher.
+
+PARAGRAPH 2 SHOULD SUMMARIZE WHAT YOU LEARNED FROM INVESTIGATING THE FOLLOW-UP QUESTIONS. WHY ARE THESE FOLLOW-UP QUESTIONS INTERESTING FOR INVESTIGATION? DESCRIBE THE TABLES/FIGURES YOU USED TO EXPLORE ANSWERS TO THESE FOLLOW-UP QUESTIONS? WHAT DID YOU LEARN FROM THE TABLES/FIGURES REGARDING THE FOLLOW-UP QUESTIONS YOU PROPOSED?
+
+Our initial investigation of the follow-up questions was mainly to determine the strength of the relationships between the variables we hypothesized could best predict average rating and estimated average play time. As stated above, we thought these questions would be interesting from a board game consumer standpoint, as rating and play time data is not as readily available for physical board games as it is for video games or other forms of virtual entertainment. If we can determine how to predict the average rating of a board game without having to survey every person who buys it and plays it, it might help board game fanatics avoid picking up new board games that might potentially be a terrible play experience. Along the same lines, if we can predict how long someone might spend playing a game (on average) before they've played it, it could help players manage time once they realize the game takes too long to play (or takes nearly no time to complete). Each of the graphs we plotted display a regression line and the correlation between the variables we thought could best predict average rating and estimated average play time. For average rating, we found fairly weak positive relationships between average rating and both estimated average play time and year of publication. This indicates that these two variables are likely not able to predict the average rating of board games too well, as they do not seem to be strongly correlated. For estimated average time, we found that the year of publication had a weak negative relationship with estimated average time, but game complexity had a fairly strong positive relationship. This leads us to believe that game complexity will be able to predict average time pretty well, and we hope to confirm this in our predictive models.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
