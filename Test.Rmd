@@ -1,0 +1,126 @@
+---
+title: "Test"
+author: "Akshay Walavalkar"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(nycflights13)
+library(readr)
+library(XML)
+library(stringr)
+library(sjmisc)
+library(dplyr)
+bgg.orginal = read_csv("bgg.csv", col_names = T) 
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+data = bgg.orginal %>%
+  filter(
+    # Removes observations that are incorrectly recorded
+    min_players<=max_players, # The maximum number of recommended players cannot logically be less than the minimum number of recommended players
+    min_time<=max_time, # The maximum estimated play time cannot logically be less than the minimum estimated play time
+    between(weight, 1, 5), # Weight is calculated by averaging votes from a scale of 1-5, thus we remove observations where the weight is less than 1 or greater than 5.
+    # Removes "games" that stand in as miscellaneous categories for the data; These are not board games; They only act as generalized placeholders and thus are irrelevant to our analysis
+    names!="Unpublished Prototype", 
+    names!="Miscellaneous Game Accessory", 
+    names!="Traditional Card Games", 
+    names!="Outside the Scope of BGG"
+    ) %>%  
+  select(!c(bgg_url, game_id, image_url, designer)) %>%  # The url variables cannot be used in a data analysis, and game_id & designer are not relevant to our data analysis
+  rename(Rank=rank,Name=names,Min_Players=min_players,Max_Players=max_players,Avg_Time=avg_time,Min_Time=min_time,Max_Time=max_time,Year_Pubd=year,Avg_Rating=avg_rating,Geek_Rating=geek_rating,Num_Votes=num_votes,Min_Age=age,mechanics=mechanic,Num_Owned=owned,categories=category,Complexity=weight) # Renames variables to accurately reflect their utility
+
+# Based on the data source, values of 0 for the following variables indicate that the publisher did not provide data or that data for the variable was unavailable; Since the data is numeric, a "0" entry might be misconstrued as an acceptable value, thus we convert 0 to NA to properly reflect this.
+data$Min_Players = replace(data$Min_Players, data$Min_Players==0, NA) # 0 players cannot play a game; this is missing data
+data$Max_Players = replace(data$Max_Players, data$Max_Players==0, NA) # 0 players cannot play a game; this is missing data
+data$Min_Age = replace(data$Min_Age, data$Min_Age==0, NA) # Someone who is 0 years old cannot play a game; this is missing data
+data$Year_Pubd = replace(data$Year_Pubd, data$Year_Pubd==0, NA) # These games have no confirmed initial publication date; this is unavailable data
+
+#Making new categories
+activity_cat = c("CityBuilding","Civilization","Educational","Maze","PartyGame","Puzzle","PikeandShot","Print&Play","Racing","TerritoryBuilding","Transportation")
+component_cat = c("CardGame","CollectibleComponents","Dice","Electronic","Miniatures")
+non_game_cat = c("AbstractStrategy","Book","ExpansionforBase-game","GameSystem")
+wargames_cat = c("Wargame","WorldWarI","WorldWarII","VietnamWar","Napoleonic","ModernWarfare","CivilWar","AmericanCivilWar","Post-Napoleonic","AmericanRevolutionaryWar","AmericanIndianWars","KoreanWar")
+skills_cat = c("Action/Dexterity","Bluffing","Deduction","Economic","Math","Medical","Number","Memory","Negotiation","Real-time","Trivia","WordGame")
+entertainment_media_cat = c("ComicBook/Strip","Movies/TV/Radiotheme","Music","Novel-based","Political","Sports","VideoGameTheme")
+thematic_cat=c("Adventure","AgeofReason","AmericanWest","Ancient","Animals","Arabian","Aviation/Flight","Children'sGame","Environmental","Exploration","Fantasy","Farming","Fighting","Horror","Humor","Industry/Manufacturing","Mafia","Mature/Adult","Medieval","Murder/Mystery","Mythology","Nautical","Pirates","Prehistoric","Religious","Renaissance","ScienceFiction","SpaceExploration","Spies/SecretAgents","Trains","Travel","Zombies")
+
+#Making new mechanics
+ip_mech = c("VariablePlayerPowers","Co-operativePlay","Partnerships","PlayerElimination","RolePlaying","Trading","Action/MovementProgramming","Voting","Acting","Singing")
+resource_mech = c("SetCollection","ActionPointAllowanceSystem","Auction/Bidding","WorkerPlacement","Pick-upandDeliver","StockHolding","CommoditySpeculation	","Betting/Wagering")
+card_mech = c("HandManagement","CardDrafting","Deck/PoolBuilding","Campaign/BattleCardDriven","TakeThat","Trick-taking")
+spacetime_mech = c("DiceRolling","AreaControl/AreaInfluence","ModularBoard","TilePlacement","Hex-and-Counter","AreaMovement","GridMovement","PointtoPointMovement","Route/NetworkBuilding","PatternBuilding","Roll/SpinandMove","AreaEnclosure","TimeTrack","Area-Impulse","CrayonRailSystem")
+strategy_mech = c("SimultaneousActionSelection","Simulation","PressYourLuck","SecretUnitDeployment","Memory","VariablePhaseOrder","PatternRecognition","Storytelling","Chit-PullSystem","Paper-and-Pencil","Rock-Paper-Scissors","LineDrawing")
+
+data = data %>% 
+  mutate("Activity_Game"=F,
+         "Component_Game"=F,
+         "Non-Game"=F,
+         "Wargame"=F,
+         "Skill_Game"=F,
+         "Entertainment_Media_Game"=F,
+         "Thematic_Game"=F,
+
+         "Interpersonal_Mechanic"=F,
+         "Resource_Mechanic"=F,
+         "Card_Mechanic"=F,
+         "Space-Time_Mechanic"=F,
+         "Abstract_Strategy_Mechanic"=F)
+
+for (i in 1:nrow(data)) {
+  #Categories
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),activity_cat),TRUE)) {
+    data$Activity_Game[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),component_cat),TRUE)) {
+    data$Component_Game[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),non_game_cat),TRUE)) {
+    data$`Non-Game`[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),wargames_cat),TRUE)) {
+    data$Wargame[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),skills_cat),TRUE)) {
+    data$Skill_Game[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),entertainment_media_cat),TRUE)) {
+    data$Entertainment_Media_Game[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),thematic_cat),TRUE)) {
+    data$Thematic_Game[i]=T
+  }
+  #Mechanics
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),ip_mech),TRUE)) {
+    data$Interpersonal_Mechanic[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),resource_mech),TRUE)) {
+    data$Resource_Mechanic[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),card_mech),TRUE)) {
+    data$Card_Mechanic[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),spacetime_mech),TRUE)) {
+    data$`Space-Time_Mechanic`[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),strategy_mech),TRUE)) {
+    data$Abstract_Strategy_Mechanic[i]=T
+  }
+}
+
+data = data %>%
+  select(!categories) %>% 
+  select(!mechanics)
+
+glimpse(data)
+```
