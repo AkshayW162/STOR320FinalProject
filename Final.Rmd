@@ -281,6 +281,32 @@ plot(Avg_Rating~., data = data.avg.rating.1)
 ```
 
 ```{r}
+#Adding logarithmic transformation for variables with huge outliers and which cover multiple orders of magnitude
+data.avg.rating.1$Max_Players = log(data.avg.rating.1$Max_Players)
+data.avg.rating.1$Avg_Time = log(data.avg.rating.1$Avg_Time+1)
+data.avg.rating.1$Min_Time = log(data.avg.rating.1$Min_Time+1)
+data.avg.rating.1$Max_Time = log(data.avg.rating.1$Max_Time+1)
+data.avg.rating.1$Num_Votes = log(data.avg.rating.1$Num_Votes+1)
+data.avg.rating.1$Num_Owned = log(data.avg.rating.1$Num_Owned+1)
+data.avg.rating.1$Duration = log(data.avg.rating.1$Duration)
+```
+
+
+```{r}
+#Using plots built specifically for binary variables for the mechanic variables
+ggplot(data.avg.rating.1, aes(x=Activity_Game,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Component_Game,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Wargame,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Skill_Game,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Entertainment_Media_Game,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Thematic_Game,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Interpersonal_Mechanic,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Resource_Mechanic,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Card_Mechanic,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Abstract_Strategy_Mechanic,y=Avg_Rating))+geom_boxplot()
+```
+
+```{r}
 #stepwise selection 
 Full_rating = lm(Avg_Rating~., data = data.avg.rating.1)
 MSE_rating = (summary(Full_rating)$sigma)^2
