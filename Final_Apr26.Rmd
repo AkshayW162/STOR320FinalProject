@@ -1,0 +1,494 @@
+---
+title: "Test"
+author: "Akshay Walavalkar"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(nycflights13)
+library(readr)
+library(XML)
+library(stringr)
+library(sjmisc)
+library(dplyr)
+library(modelr)
+library(broom)
+library(purrr)
+library(leaps)
+library(gridExtra)
+library(grid)
+library(RColorBrewer)
+bgg.orginal = read_csv("bgg.csv", col_names = T) 
+MAE.func= function(actual,predict){
+  res= actual-predict
+  mae=mean(abs(res),na.rm=T)
+  return(mae)
+}
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+data = bgg.orginal %>%
+  filter(
+    # Removes observations that are incorrectly recorded
+    min_players<=max_players, # The maximum number of recommended players cannot logically be less than the minimum number of recommended players
+    min_time<=max_time, # The maximum estimated play time cannot logically be less than the minimum estimated play time
+    between(weight, 1, 5), # Weight is calculated by averaging votes from a scale of 1-5, thus we remove observations where the weight is less than 1 or greater than 5.
+    # Removes "games" that stand in as miscellaneous categories for the data; These are not board games; They only act as generalized placeholders and thus are irrelevant to our analysis
+    names!="Unpublished Prototype", 
+    names!="Miscellaneous Game Accessory", 
+    names!="Traditional Card Games", 
+    names!="Outside the Scope of BGG"
+    ) %>%  
+  select(!c(bgg_url, game_id, image_url, designer)) %>%  # The url variables cannot be used in a data analysis, and game_id & designer are not relevant to our data analysis
+  rename(Rank=rank,Name=names,Min_Players=min_players,Max_Players=max_players,Avg_Time=avg_time,Min_Time=min_time,Max_Time=max_time,Year_Pubd=year,Avg_Rating=avg_rating,Geek_Rating=geek_rating,Num_Votes=num_votes,Min_Age=age,mechanics=mechanic,Num_Owned=owned,categories=category,Complexity=weight) # Renames variables to accurately reflect their utility
+# Based on the data source, values of 0 for the following variables indicate that the publisher did not provide data or that data for the variable was unavailable; Since the data is numeric, a "0" entry might be misconstrued as an acceptable value, thus we convert 0 to NA to properly reflect this.
+data$Min_Players = replace(data$Min_Players, data$Min_Players==0, NA) # 0 players cannot play a game; this is missing data
+data$Max_Players = replace(data$Max_Players, data$Max_Players==0, NA) # 0 players cannot play a game; this is missing data
+data$Min_Age = replace(data$Min_Age, data$Min_Age==0, NA) # Someone who is 0 years old cannot play a game; this is missing data
+data$Year_Pubd = replace(data$Year_Pubd, data$Year_Pubd==0, NA) # These games have no confirmed initial publication date; this is unavailable data
+#Making new categories
+activity_cat = c("CityBuilding","Civilization","Educational","Maze","PartyGame","Puzzle","PikeandShot","Print&Play","Racing","TerritoryBuilding","Transportation")
+component_cat = c("CardGame","CollectibleComponents","Dice","Electronic","Miniatures")
+non_game_cat = c("AbstractStrategy","Book","ExpansionforBase-game","GameSystem")
+wargames_cat = c("Wargame","WorldWarI","WorldWarII","VietnamWar","Napoleonic","ModernWarfare","CivilWar","AmericanCivilWar","Post-Napoleonic","AmericanRevolutionaryWar","AmericanIndianWars","KoreanWar")
+skills_cat = c("Action/Dexterity","Bluffing","Deduction","Economic","Math","Medical","Number","Memory","Negotiation","Real-time","Trivia","WordGame")
+entertainment_media_cat = c("ComicBook/Strip","Movies/TV/Radiotheme","Music","Novel-based","Political","Sports","VideoGameTheme")
+thematic_cat=c("Adventure","AgeofReason","AmericanWest","Ancient","Animals","Arabian","Aviation/Flight","Children'sGame","Environmental","Exploration","Fantasy","Farming","Fighting","Horror","Humor","Industry/Manufacturing","Mafia","Mature/Adult","Medieval","Murder/Mystery","Mythology","Nautical","Pirates","Prehistoric","Religious","Renaissance","ScienceFiction","SpaceExploration","Spies/SecretAgents","Trains","Travel","Zombies")
+#Making new mechanics
+ip_mech = c("VariablePlayerPowers","Co-operativePlay","Partnerships","PlayerElimination","RolePlaying","Trading","Action/MovementProgramming","Voting","Acting","Singing")
+resource_mech = c("SetCollection","ActionPointAllowanceSystem","Auction/Bidding","WorkerPlacement","Pick-upandDeliver","StockHolding","CommoditySpeculation	","Betting/Wagering")
+card_mech = c("HandManagement","CardDrafting","Deck/PoolBuilding","Campaign/BattleCardDriven","TakeThat","Trick-taking")
+spacetime_mech = c("DiceRolling","AreaControl/AreaInfluence","ModularBoard","TilePlacement","Hex-and-Counter","AreaMovement","GridMovement","PointtoPointMovement","Route/NetworkBuilding","PatternBuilding","Roll/SpinandMove","AreaEnclosure","TimeTrack","Area-Impulse","CrayonRailSystem")
+strategy_mech = c("SimultaneousActionSelection","Simulation","PressYourLuck","SecretUnitDeployment","Memory","VariablePhaseOrder","PatternRecognition","Storytelling","Chit-PullSystem","Paper-and-Pencil","Rock-Paper-Scissors","LineDrawing")
+data = data %>% 
+  mutate("Activity_Game"=F,
+         "Component_Game"=F,
+         "Non-Game"=F,
+         "Wargame"=F,
+         "Skill_Game"=F,
+         "Entertainment_Media_Game"=F,
+         "Thematic_Game"=F,
+         "Interpersonal_Mechanic"=F,
+         "Resource_Mechanic"=F,
+         "Card_Mechanic"=F,
+         "Space-Time_Mechanic"=F,
+         "Abstract_Strategy_Mechanic"=F)
+for (i in 1:nrow(data)) {
+  #Categories
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),activity_cat),TRUE)) {
+    data$Activity_Game[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),component_cat),TRUE)) {
+    data$Component_Game[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),non_game_cat),TRUE)) {
+    data$`Non-Game`[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),wargames_cat),TRUE)) {
+    data$Wargame[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),skills_cat),TRUE)) {
+    data$Skill_Game[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),entertainment_media_cat),TRUE)) {
+    data$Entertainment_Media_Game[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),thematic_cat),TRUE)) {
+    data$Thematic_Game[i]=T
+  }
+  #Mechanics
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),ip_mech),TRUE)) {
+    data$Interpersonal_Mechanic[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),resource_mech),TRUE)) {
+    data$Resource_Mechanic[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),card_mech),TRUE)) {
+    data$Card_Mechanic[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),spacetime_mech),TRUE)) {
+    data$`Space-Time_Mechanic`[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),strategy_mech),TRUE)) {
+    data$Abstract_Strategy_Mechanic[i]=T
+  }
+}
+data = data %>%
+  select(!categories) %>% 
+  select(!mechanics)
+glimpse(data)
+```
+
+
+
+#More Cleaning
+```{r}
+data.1= data %>%
+  na.omit()%>%
+  mutate(Avg_Num_Players= round((Max_Players-Min_Players)/2, digits=0))%>% #create a variable for Avg_Num_Players
+  filter(Year_Pubd>1500)%>% #excluding the games that were published before 1500, and therefore our models can only be used for the games that are published after 1500
+  mutate(Duration= 2018-Year_Pubd+1)%>% #create a variable for duration
+  select(., -c("Name")) #excluding the variable name
+head(data.1)
+```
+
+#AVG_TIME
+
+```{r}
+#Removing outliers 
+Q <- quantile(data.1$Avg_Time, probs=c(.25, .75), na.rm = FALSE)
+iqr <- IQR(data.1$Avg_Time)
+up <-  Q[2]+1.5*iqr # Upper Range  
+low<- Q[1]-1.5*iqr # Lower Range
+data.avg.time<- subset(data.1, data.1$Avg_Time > (Q[1] - 1.5*iqr) & data.1$Avg_Time < (Q[2]+1.5*iqr))
+
+data.avg.time.1= data.avg.time %>%
+  select(.,-c( "Min_Time","Max_Time")) #excluding Min_Time & Max_Time since we are trying to predict Avg_Time
+```
+
+
+```{r}
+#Inspecting relationships
+plot(Avg_Time~., data = data.avg.time.1)
+```
+
+```{r}
+#stepwise selection 
+Full = lm(Avg_Time~., data = data.avg.time.1)
+MSE = (summary(Full)$sigma)^2
+none = lm(Avg_Time ~1, data= data.avg.time.1)
+step_model=step(none, scope=list(upper=Full), scale=MSE, trace = FALSE)
+summary(step_model)$adj.r.squared
+#Backward elimination
+back_model=step(Full, scale=MSE, trace = FALSE)
+summary(back_model)$adj.r.squared
+
+# there is no  a big difference between the two, we continue with stepwise
+```
+
+
+```{r}
+#Graphing subsets (using stepwise selection) and the corresponding adj-r^2 for each set
+ret.full <- regsubsets(Avg_Time~.,data=data.avg.time.1,nvmax=22)
+sum.ret.full <- summary(ret.full)
+sum.ret.full$rsq
+plot(ret.full,scale='adjr2')
+```
+
+
+
+```{r}
+#Creating models with .54-.57  adj r^2:
+Avg_Time_Mod1= lm(Avg_Time ~ Complexity +`Non-Game`+Component_Game +Min_Age+
+                    Wargame+Entertainment_Media_Game +`Space-Time_Mechanic`+
+                    Min_Players+Interpersonal_Mechanic+Resource_Mechanic+ 
+                    Card_Mechanic  + Activity_Game+ Duration, data = data.avg.time.1)
+
+Avg_Time_Mod2= lm(Avg_Time ~ Min_Players+Min_Age+Complexity+
+                    Component_Game+`Non-Game`+Wargame+Skill_Game+Entertainment_Media_Game+
+                    `Space-Time_Mechanic`+ Duration,data= data.avg.time.1)
+Avg_Time_Mod3= lm(Avg_Time ~ Min_Players+Complexity+Component_Game+`Non-Game`+`Space-Time_Mechanic`,data= data.avg.time.1)
+
+Avg_Time_Mod4= lm(Avg_Time ~Min_Players+Num_Votes+Min_Age+Complexity+Activity_Game+
+                    Component_Game+`Non-Game`+Wargame+Entertainment_Media_Game+
+                    Resource_Mechanic+Card_Mechanic+`Space-Time_Mechanic`,data= data.avg.time.1)
+Avg_Time_Mod5= lm(Avg_Time ~Min_Players+Min_Age+Geek_Rating+Complexity+Activity_Game+
+                    Component_Game+`Non-Game`+Wargame+Entertainment_Media_Game+
+                    Resource_Mechanic+Card_Mechanic+`Space-Time_Mechanic`+Avg_Num_Players ,data= data.avg.time.1)
+
+Avg_Time_Mod6= lm(Avg_Time ~Year_Pubd +Geek_Rating+Num_Votes+Min_Age+Num_Owned+Complexity+Activity_Game+
+                    Component_Game+`Non-Game`+Wargame+Skill_Game+Entertainment_Media_Game+
+                    Thematic_Game+Interpersonal_Mechanic+Resource_Mechanic+Card_Mechanic+
+                    `Space-Time_Mechanic` ,data= data.avg.time.1)
+Avg_Time_Mod7= lm(Avg_Time ~Min_Players+Max_Players+Year_Pubd+Avg_Rating+
+                    Num_Votes+Min_Age+Num_Owned+Complexity+Activity_Game+
+                    Component_Game+`Non-Game`+Wargame+Skill_Game+Entertainment_Media_Game+
+                    Thematic_Game+Interpersonal_Mechanic+Resource_Mechanic+Card_Mechanic+
+                    `Space-Time_Mechanic`,data= data.avg.time.1)
+Avg_Time_Mod8= lm(Avg_Time ~Min_Players+Max_Players+Year_Pubd+Avg_Rating+
+                    Min_Age+Complexity+Activity_Game+Component_Game+`Non-Game`+Wargame+
+                    Skill_Game+Entertainment_Media_Game+Thematic_Game+Interpersonal_Mechanic+
+                    Resource_Mechanic+Card_Mechanic+`Space-Time_Mechanic` ,data= data.avg.time.1)
+Avg_Time_Mod9= lm(Avg_Time ~Min_Age+Complexity+Activity_Game+
+                    `Non-Game`+Wargame+Entertainment_Media_Game+
+                    Resource_Mechanic+Card_Mechanic+`Space-Time_Mechanic` ,data= data.avg.time.1)
+Avg_Time_Mod10= lm(Avg_Time ~Min_Players+Min_Age+Complexity+
+                    Component_Game+`Non-Game`,data= data.avg.time.1)
+
+
+```
+
+```{r}
+#Calculate the MAE for the 10 models,and create a table with the models' number and the coresponding MAEs, and adj r^2   
+data.avg.time.2= data.avg.time.1%>% 
+ add_predictions(Avg_Time_Mod1,var="Mod1")%>%
+  add_predictions(Avg_Time_Mod2,var="Mod2")%>%
+  add_predictions(Avg_Time_Mod3,var="Mod3")%>%
+  add_predictions(Avg_Time_Mod4,var="Mod4")%>%
+  add_predictions(Avg_Time_Mod5,var="Mod5")%>%
+  add_predictions(Avg_Time_Mod6,var="Mod6")%>%
+  add_predictions(Avg_Time_Mod7,var="Mod7")%>%
+  add_predictions(Avg_Time_Mod8,var="Mod8")%>%
+  add_predictions(Avg_Time_Mod9,var="Mod9")%>%
+  add_predictions(Avg_Time_Mod10,var="Mod10")
+  
+  
+Model= c(1:10)
+MAE= c(round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod1), digits=2),
+       round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod2), digits=2),
+       round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod3), digits=2),
+       round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod4), digits=2),
+       round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod5), digits=2),
+       round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod6), digits=2),
+       round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod7), digits=2),
+       round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod8), digits=2),
+       round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod9), digits=2),
+      round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod10), digits=2))
+AdjR.squared= c(round(summary(Avg_Time_Mod1)$adj.r.squared, digits=2),
+        round(summary(Avg_Time_Mod2)$adj.r.squared,digits=2),
+        round(summary(Avg_Time_Mod3)$adj.r.squared,digits=2),
+        round(summary(Avg_Time_Mod4)$adj.r.squared,digits=2),
+        round(summary(Avg_Time_Mod5)$adj.r.squared,digits=2),
+        round(summary(Avg_Time_Mod6)$adj.r.squared,digits=2),
+        round(summary(Avg_Time_Mod7)$adj.r.squared,digits=2),
+        round(summary(Avg_Time_Mod8)$adj.r.squared,digits=2),
+        round(summary(Avg_Time_Mod9)$adj.r.squared,digits=2),
+        round(summary(Avg_Time_Mod10)$adj.r.squared, digits=2))
+avg.time.Final= data.frame(Model, MAE,AdjR.squared )
+MAE_table= avg.time.Final %>%
+  arrange(desc(AdjR.squared))
+adjR_table= avg.time.Final %>%
+  arrange(MAE)
+
+MAE_table
+adjR_table
+```
+
+
+
+#AVG_RATING
+```{r}
+data.avg.rating.1= data.avg.rating %>%
+  select(.,-c( "Geek_Rating")) 
+```
+
+```{r}
+#Inspecting relationships
+plot(Avg_Rating~., data = data.avg.rating.1)
+```
+
+
+```{r, eval=FALSE}
+#Using plots built specifically for binary variables for the mechanic variables
+ggplot(data.avg.rating.1, aes(x=Activity_Game,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Component_Game,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Wargame,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Skill_Game,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Entertainment_Media_Game,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Thematic_Game,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Interpersonal_Mechanic,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Resource_Mechanic,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Card_Mechanic,y=Avg_Rating))+geom_boxplot()
+ggplot(data.avg.rating.1, aes(x=Abstract_Strategy_Mechanic,y=Avg_Rating))+geom_boxplot()
+```
+
+```{r}
+#stepwise selection 
+Full_rating = lm(Avg_Rating~., data = data.avg.rating.1)
+MSE_rating = (summary(Full_rating)$sigma)^2
+none_rating = lm(Avg_Rating ~1, data= data.avg.rating.1)
+step_model_rating=step(none_rating, scope=list(upper=Full_rating), scale=MSE_rating, trace = FALSE)
+summary(step_model)$adj.r.squared
+```
+```{r, eval=FALSE}
+#Graphing subsets (using stepwise selection) and the corresponding adj-r^2 for each set
+ret.full2 <- regsubsets(Avg_Rating~.,data=data.avg.rating.1,nvmax=22)
+sum.ret.full2 <- summary(ret.full2)
+sum.ret.full2$rsq
+plot(ret.full2,scale='adjr2')
+```
+
+```{r}
+#Creating models with the highest adj r^2:
+Avg.rating.Mod1= lm(Avg_Rating ~ Complexity + Duration + Wargame + 
+    Thematic_Game + Min_Age + Min_Players + Interpersonal_Mechanic + 
+    `Space-Time_Mechanic` + Num_Votes + Abstract_Strategy_Mechanic + 
+    Num_Owned + Resource_Mechanic + Entertainment_Media_Game + 
+    Min_Time + Avg_Time + Component_Game, 
+    data = data.avg.rating.1)
+Avg.rating.Mod2= lm(Avg_Rating ~Min_Players+Max_Players +Min_Time+Max_Time+Year_Pubd+
+           Num_Votes+Min_Age+Num_Owned+Complexity+
+           Interpersonal_Mechanic+
+           Abstract_Strategy_Mechanic+Avg_Num_Players ,data= data.avg.rating.1)
+Avg.rating.Mod3=lm(Avg_Rating ~Min_Players+
+           Num_Votes+Num_Owned+Activity_Game+Skill_Game+
+           Interpersonal_Mechanic+Duration ,data= data.avg.rating.1)
+Avg.rating.Mod4= lm(Avg_Rating ~Min_Players+Max_Players+Min_Time+Max_Time+
+           Num_Votes+Min_Age+Num_Owned+Complexity+Activity_Game+
+           Skill_Game+Thematic_Game+Interpersonal_Mechanic+Resource_Mechanic+Card_Mechanic+
+           Abstract_Strategy_Mechanic+Avg_Num_Players ,data= data.avg.rating.1)
+Avg.rating.Mod5= lm(Avg_Rating ~Skill_Game+
+           Interpersonal_Mechanic+Duration ,data= data.avg.rating.1)
+summary(Avg.rating.Mod3)
+
+```
+
+```{r, eval=FALSE}
+#Calculate the MAE for the 5 models,and create a table with the models' number, the corresponding MAEs, and adj r^2   
+data.avg.rating.2= data.avg.rating.1%>% 
+ add_predictions(Avg.rating.Mod1,var="Mod1")%>%
+  add_predictions(Avg.rating.Mod2,var="Mod2")%>%
+  add_predictions(Avg.rating.Mod3,var="Mod3")%>%
+  add_predictions(Avg.rating.Mod4,var="Mod4")%>%
+  add_predictions(Avg.rating.Mod5,var="Mod5")
+  
+  
+  
+Avg_rating_Model_num= c(1:5)
+Avg_rating_MAE= c(round(MAE.func(data.avg.rating.2$Avg_Rating, data.avg.rating.2$Mod1),digits=2),
+       round(MAE.func(data.avg.rating.2$Avg_Rating, data.avg.rating.2$Mod2),digits=2),
+       round(MAE.func(data.avg.rating.2$Avg_Rating, data.avg.rating.2$Mod3),digits=2),
+       round(MAE.func(data.avg.rating.2$Avg_Rating, data.avg.rating.2$Mod4),digits=2),
+       round(MAE.func(data.avg.rating.2$Avg_Rating, data.avg.rating.2$Mod5), digits=2))
+Avg_rating_adjR= c(round(summary(Avg.rating.Mod1)$adj.r.squared, digits = 2), 
+       round(summary(Avg.rating.Mod2)$adj.r.squared,digits=2),
+       round(summary(Avg.rating.Mod3)$adj.r.squared,digits=2),
+       round(summary(Avg.rating.Mod4)$adj.r.squared,digits=2),
+       round(summary(Avg.rating.Mod2)$adj.r.squared,digits=2))
+avg.rating.Final= data.frame(Avg_rating_Model_num, Avg_rating_MAE,Avg_rating_adjR )
+MAE.table= avg.rating.Final %>%
+  arrange(desc(Avg_rating_adjR))
+adjR.table= avg.rating.Final %>%
+  arrange(Avg_rating_MAE)
+
+MAE.table
+adjR.table
+```
+
+
+```{r, eval=FALSE}
+#10-fold CV for rating models
+MAE.func = function(v) {
+  s = 0
+  for (i in 1:length(v)) {
+    s = s + abs(v[i])
+  }
+  return(s/length(v))
+}
+
+ratingdata = data.avg.rating.1
+timedata = data.avg.time.2
+
+ratingdata = ratingdata[sample(1:nrow(ratingdata)),]
+rating_resids_1 = c()
+rating_resids_2 = c()
+rating_resids_3 = c()
+rating_resids_4 = c()
+rating_resids_5 = c()
+
+
+for (k in 1:10) {
+  ratingtestindices = c(round((k-1)/10*nrow(ratingdata)+1):round(k/10*nrow(ratingdata)))
+  ratingtestdata = ratingdata[ratingtestindices,]
+  ratingtraindata = ratingdata[-ratingtestindices,]
+  
+  rating_model_1 = lm(Avg_Rating ~ Complexity+ Duration + Wargame + 
+    Thematic_Game + Min_Age + Min_Players + Interpersonal_Mechanic + 
+    `Space-Time_Mechanic` + Num_Votes + Abstract_Strategy_Mechanic + 
+    Num_Owned + Resource_Mechanic + Entertainment_Media_Game + 
+    Min_Time + Avg_Time + Component_Game,data=ratingtraindata)
+  rating_resids_1 = append(rating_resids_1,ratingtestdata$Avg_Rating-predict(rating_model_1,ratingtestdata))
+  
+  rating_model_2 = lm(Avg_Rating ~Min_Players+Max_Players +Min_Time+Max_Time+Year_Pubd+
+           Num_Votes+Min_Age+Num_Owned+Complexity+Activity_Game+
+           `Non-Game`+Skill_Game+Entertainment_Media_Game+Thematic_Game+
+           Interpersonal_Mechanic+Resource_Mechanic+Card_Mechanic+
+           Abstract_Strategy_Mechanic+Avg_Num_Players,data=ratingtraindata)
+  rating_resids_2 = append(rating_resids_2,ratingtestdata$Avg_Rating-predict(rating_model_2,ratingtestdata))
+  
+  rating_model_3 = lm(Avg_Rating ~Min_Players+
+           Num_Votes+Num_Owned+Activity_Game+Skill_Game+
+           Interpersonal_Mechanic+Duration,data=ratingtraindata)
+  rating_resids_3 = append(rating_resids_3,ratingtestdata$Avg_Rating-predict(rating_model_3,ratingtestdata))
+  
+  rating_model_4 = lm(Avg_Rating ~Min_Players+Max_Players+Min_Time+Max_Time+
+           Num_Votes+Min_Age+Num_Owned+Complexity+Activity_Game+
+           Skill_Game+Thematic_Game+Interpersonal_Mechanic+Resource_Mechanic+Card_Mechanic+
+           Abstract_Strategy_Mechanic+Avg_Num_Players,data=ratingtraindata)
+  rating_resids_4 = append(rating_resids_4,ratingtestdata$Avg_Rating-predict(rating_model_4,ratingtestdata))
+  
+  rating_model_5 = lm(Avg_Rating ~Skill_Game+
+           Interpersonal_Mechanic+Duration,data=ratingtraindata)
+  rating_resids_5 = append(rating_resids_5,ratingtestdata$Avg_Rating-predict(rating_model_5,ratingtestdata))
+}
+
+
+ratingskfold = data.frame(c(1:5), c(MAE.func(rating_resids_1),MAE.func(rating_resids_2),MAE.func(rating_resids_3),MAE.func(rating_resids_4),MAE.func(rating_resids_5)))
+colnames(ratingskfold) = c("Ratings Model Number","10-fold MAE")
+ratingskfold
+```
+
+```{r, eval=FALSE}
+timedata = timedata[sample(1:nrow(timedata)),]
+time_resids_1 = c()
+time_resids_2 = c()
+time_resids_3 = c()
+time_resids_4 = c()
+time_resids_5 = c()
+
+
+for (k in 1:10) {
+  timetestindices = c(round((k-1)/10*nrow(timedata)+1):round(k/10*nrow(timedata)))
+  timetestdata = timedata[timetestindices,]
+  timetraindata = timedata[-timetestindices,]
+  
+  time_model_1 = lm(Avg_Time ~ Complexity +`Non-Game`+Component_Game +Min_Age+
+                    Wargame+Entertainment_Media_Game +`Space-Time_Mechanic`+
+                    Min_Players+Interpersonal_Mechanic+Resource_Mechanic+ 
+                    Card_Mechanic  + Activity_Game+ Duration,data=timetraindata)
+  time_resids_1 = append(time_resids_1,timetestdata$Avg_Rating-predict(time_model_1,timetestdata))
+  
+  time_model_2 = lm(Avg_Time ~ Min_Players+Min_Age+Complexity+
+                    Component_Game+`Non-Game`+Wargame+Skill_Game+Entertainment_Media_Game+
+                    `Space-Time_Mechanic`+ Duration,data=timetraindata)
+  time_resids_2 = append(time_resids_2,timetestdata$Avg_Rating-predict(time_model_2,timetestdata))
+  
+  time_model_3 = lm(Avg_Time ~ Min_Players+Complexity+Component_Game+`Non-Game`+`Space-Time_Mechanic`,data=timetraindata)
+  time_resids_3 = append(time_resids_3,timetestdata$Avg_Rating-predict(time_model_3,timetestdata))
+  
+  time_model_4 = lm(Avg_Time ~Min_Players+Num_Votes+Min_Age+Complexity+Activity_Game+
+                    Component_Game+`Non-Game`+Wargame+Entertainment_Media_Game+
+                    Resource_Mechanic+Card_Mechanic+`Space-Time_Mechanic`,data=timetraindata)
+  time_resids_4 = append(time_resids_4,timetestdata$Avg_Rating-predict(time_model_4,timetestdata))
+  
+  time_model_5 = lm(Avg_Time ~Min_Players+Min_Age+Geek_Rating+Complexity+Activity_Game+
+                    Component_Game+`Non-Game`+Wargame+Entertainment_Media_Game+
+                    Resource_Mechanic+Card_Mechanic+`Space-Time_Mechanic`+Avg_Num_Players ,data=timetraindata)
+  time_resids_5 = append(time_resids_5,timetestdata$Avg_Rating-predict(time_model_5,timetestdata))
+}
+
+
+timekfold = data.frame(c(1:5), c(MAE.func(time_resids_1),MAE.func(time_resids_2),MAE.func(time_resids_3),MAE.func(time_resids_4),MAE.func(time_resids_5)))
+colnames(timekfold) = c("Time Model Number","10-fold MAE")
+timekfold
+```
+
+#Q1
+
+Q1:
+We used stepwise regression to obtain subsets of predictors for average time. Then we calculated the corresponding adjusted R square for each subset. We choose the top ten models with adjusted R square between.54 and .57, where the highest adjusted R square was .57. After that, we checked the variables that are not statistically significant. Some of the variables that were suggested by stepwise regression such as Rank were not statistically significant in any of the models, so we decided to remove them. Moreover, we calculated the MAE for the models which were between 16.75 and 17.18. [MAE.table] &[adjr.table][put the side by side if you can]
+Since there were no big differences between the MAE, we decided to keep the ten models and perform a cross-validation analysis. 
+
+#Q2
+First, we removed the Greek_rating variable since our goal is to predict the average rating. Then we graphed the binary variables (mechanics and categories) to inspect which variables seem to have a relationship with avg_rating. We found out that ….[PATRICk]. After that, we performed a step-wise regression to obtain subsets of predictors that best explain the variability of average rating. The top ten models with the highest adjusted R square had similar sets of predictors; therefore we decided to continue with only 5 of them. We calculated the MAE of the models. [MAE.table] &[adjr.table][put the side by side if you can]
+Based on MAE and adjusted R square, model 1 is the best model for predicting average rating. However, we decided to perform a cross-validation to ensure that the model can be generalized and used for other datasets. 
