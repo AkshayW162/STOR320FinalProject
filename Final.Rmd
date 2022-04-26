@@ -470,3 +470,8 @@ timekfold = data.frame(c(1:5), c(MAE.func(time_resids_1),MAE.func(time_resids_2)
 colnames(timekfold) = c("Time Model Number","10-fold MAE")
 timekfold
 ```
+
+
+
+Q1:
+We used stepwise regression to obtain subsets of predictors for average time. Then we calculated the corresponding adjusted R square for each subset. We choose the top ten models with adjusted R square between.54 and .57, where the highest adjusted R square was .57. After that, we checked the variables that are not statistically significant. Some of the variables that were suggested by stepwise regression such as Rank were not statistically significant in any of the models, so we decided to remove them. Moreover, we calculated the MAE for the models which were between 16.75 and 17.18. Since there were no big differences between the MAE, we decided to keep the ten models and perform a cross-validation analysis. 
