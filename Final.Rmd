@@ -280,17 +280,6 @@ data.avg.rating.1= data.avg.rating %>%
 plot(Avg_Rating~., data = data.avg.rating.1)
 ```
 
-```{r}
-#Adding logarithmic transformation for variables with huge outliers and which cover multiple orders of magnitude
-data.avg.rating.1$Max_Players = log(data.avg.rating.1$Max_Players)
-data.avg.rating.1$Avg_Time = log(data.avg.rating.1$Avg_Time+1)
-data.avg.rating.1$Min_Time = log(data.avg.rating.1$Min_Time+1)
-data.avg.rating.1$Max_Time = log(data.avg.rating.1$Max_Time+1)
-data.avg.rating.1$Num_Votes = log(data.avg.rating.1$Num_Votes+1)
-data.avg.rating.1$Num_Owned = log(data.avg.rating.1$Num_Owned+1)
-data.avg.rating.1$Duration = log(data.avg.rating.1$Duration)
-```
-
 
 ```{r}
 #Using plots built specifically for binary variables for the mechanic variables
@@ -375,5 +364,115 @@ avg.rating.Final
 ```
 
 
+```{r}
+Avg_Time_Mod1
+
+```
 
 
+```{r}
+#10-fold CV for rating models
+MAE.func = function(v) {
+  s = 0
+  for (i in 1:length(v)) {
+    s = s + abs(v[i])
+  }
+  return(s/length(v))
+}
+
+ratingdata = data.avg.rating.1
+timedata = data.avg.time.2
+
+ratingdata = ratingdata[sample(1:nrow(ratingdata)),]
+rating_resids_1 = c()
+rating_resids_2 = c()
+rating_resids_3 = c()
+rating_resids_4 = c()
+rating_resids_5 = c()
+
+
+for (k in 1:10) {
+  ratingtestindices = c(round((k-1)/10*nrow(ratingdata)+1):round(k/10*nrow(ratingdata)))
+  ratingtestdata = ratingdata[ratingtestindices,]
+  ratingtraindata = ratingdata[-ratingtestindices,]
+  
+  rating_model_1 = lm(Avg_Rating ~ Complexity + Rank + Duration + Wargame + 
+    Thematic_Game + Min_Age + Min_Players + Interpersonal_Mechanic + 
+    `Space-Time_Mechanic` + Num_Votes + Abstract_Strategy_Mechanic + 
+    Num_Owned + Resource_Mechanic + Entertainment_Media_Game + 
+    Min_Time + Avg_Time + Component_Game,data=ratingtraindata)
+  rating_resids_1 = append(rating_resids_1,ratingtestdata$Avg_Rating-predict(rating_model_1,ratingtestdata))
+  
+  rating_model_2 = lm(Avg_Rating ~Rank+Min_Players+Max_Players +Min_Time+Max_Time+Year_Pubd+
+           Num_Votes+Min_Age+Num_Owned+Complexity+Activity_Game+
+           `Non-Game`+Skill_Game+Entertainment_Media_Game+Thematic_Game+
+           Interpersonal_Mechanic+Resource_Mechanic+Card_Mechanic+
+           Abstract_Strategy_Mechanic+Avg_Num_Players,data=ratingtraindata)
+  rating_resids_2 = append(rating_resids_2,ratingtestdata$Avg_Rating-predict(rating_model_2,ratingtestdata))
+  
+  rating_model_3 = lm(Avg_Rating ~Rank+Min_Players+
+           Num_Votes+Num_Owned+Activity_Game+Skill_Game+
+           Interpersonal_Mechanic+Duration,data=ratingtraindata)
+  rating_resids_3 = append(rating_resids_3,ratingtestdata$Avg_Rating-predict(rating_model_3,ratingtestdata))
+  
+  rating_model_4 = lm(Avg_Rating ~Rank+Min_Players+Max_Players+Min_Time+Max_Time+
+           Num_Votes+Min_Age+Num_Owned+Complexity+Activity_Game+
+           Skill_Game+Thematic_Game+Interpersonal_Mechanic+Resource_Mechanic+Card_Mechanic+
+           Abstract_Strategy_Mechanic+Avg_Num_Players,data=ratingtraindata)
+  rating_resids_4 = append(rating_resids_4,ratingtestdata$Avg_Rating-predict(rating_model_4,ratingtestdata))
+  
+  rating_model_5 = lm(Avg_Rating ~Rank+Skill_Game+
+           Interpersonal_Mechanic+Duration,data=ratingtraindata)
+  rating_resids_5 = append(rating_resids_5,ratingtestdata$Avg_Rating-predict(rating_model_5,ratingtestdata))
+}
+
+
+ratingskfold = data.frame(c(1:5), c(MAE.func(rating_resids_1),MAE.func(rating_resids_2),MAE.func(rating_resids_3),MAE.func(rating_resids_4),MAE.func(rating_resids_5)))
+colnames(ratingskfold) = c("Ratings Model Number","10-fold M")
+ratingskfold
+```
+
+```{r}
+timedata = timedata[sample(1:nrow(timedata)),]
+time_resids_1 = c()
+time_resids_2 = c()
+time_resids_3 = c()
+time_resids_4 = c()
+time_resids_5 = c()
+
+
+for (k in 1:10) {
+  timetestindices = c(round((k-1)/10*nrow(timedata)+1):round(k/10*nrow(timedata)))
+  timetestdata = timedata[timetestindices,]
+  timetraindata = timedata[-timetestindices,]
+  
+  time_model_1 = lm(Avg_Time ~ Complexity +`Non-Game`+Component_Game +Min_Age+
+                    Wargame+Entertainment_Media_Game +`Space-Time_Mechanic`+
+                    Min_Players+Interpersonal_Mechanic+Resource_Mechanic+ 
+                    Card_Mechanic  + Activity_Game+ Duration,data=timetraindata)
+  time_resids_1 = append(time_resids_1,timetestdata$Avg_Rating-predict(time_model_1,timetestdata))
+  
+  time_model_2 = lm(Avg_Time ~ Rank+Min_Players+Min_Age+Complexity+
+                    Component_Game+`Non-Game`+Wargame+Skill_Game+Entertainment_Media_Game+
+                    `Space-Time_Mechanic`+ Duration,data=timetraindata)
+  time_resids_2 = append(time_resids_2,timetestdata$Avg_Rating-predict(time_model_2,timetestdata))
+  
+  time_model_3 = lm(Avg_Time ~ Min_Players+Complexity+Component_Game+`Non-Game`+`Space-Time_Mechanic`,data=timetraindata)
+  time_resids_3 = append(time_resids_3,timetestdata$Avg_Rating-predict(time_model_3,timetestdata))
+  
+  time_model_4 = lm(Avg_Time ~Min_Players+Num_Votes+Min_Age+Complexity+Activity_Game+
+                    Component_Game+`Non-Game`+Wargame+Entertainment_Media_Game+
+                    Resource_Mechanic+Card_Mechanic+`Space-Time_Mechanic`,data=timetraindata)
+  time_resids_4 = append(time_resids_4,timetestdata$Avg_Rating-predict(time_model_4,timetestdata))
+  
+  time_model_5 = lm(Avg_Time ~Rank+Min_Players+Min_Age+Geek_Rating+Complexity+Activity_Game+
+                    Component_Game+`Non-Game`+Wargame+Entertainment_Media_Game+
+                    Resource_Mechanic+Card_Mechanic+`Space-Time_Mechanic`+Avg_Num_Players ,data=timetraindata)
+  time_resids_5 = append(time_resids_5,timetestdata$Avg_Rating-predict(time_model_5,timetestdata))
+}
+
+
+timekfold = data.frame(c(1:5), c(MAE.func(time_resids_1),MAE.func(time_resids_2),MAE.func(time_resids_3),MAE.func(time_resids_4),MAE.func(time_resids_5)))
+colnames(timekfold) = c("Time Model Number","10-fold M")
+timekfold
+```
