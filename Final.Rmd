@@ -422,7 +422,7 @@ for (k in 1:10) {
 
 
 ratingskfold = data.frame(c(1:5), c(MAE.func(rating_resids_1),MAE.func(rating_resids_2),MAE.func(rating_resids_3),MAE.func(rating_resids_4),MAE.func(rating_resids_5)))
-colnames(ratingskfold) = c("Ratings Model Number","10-fold M")
+colnames(ratingskfold) = c("Ratings Model Number","10-fold MAE")
 ratingskfold
 ```
 
@@ -467,6 +467,6 @@ for (k in 1:10) {
 
 
 timekfold = data.frame(c(1:5), c(MAE.func(time_resids_1),MAE.func(time_resids_2),MAE.func(time_resids_3),MAE.func(time_resids_4),MAE.func(time_resids_5)))
-colnames(timekfold) = c("Time Model Number","10-fold M")
+colnames(timekfold) = c("Time Model Number","10-fold MAE")
 timekfold
 ```
