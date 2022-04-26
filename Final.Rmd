@@ -365,12 +365,6 @@ avg.rating.Final
 
 
 ```{r}
-Avg_Time_Mod1
-
-```
-
-
-```{r}
 #10-fold CV for rating models
 MAE.func = function(v) {
   s = 0
