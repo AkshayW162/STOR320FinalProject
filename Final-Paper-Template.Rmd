@@ -1,0 +1,671 @@
+---
+title: "Final Paper"
+author: "STOR 320.02 Group 6"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+---
+<style type="text/css">
+  body{
+  font-size: 14pt;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(nycflights13)
+library(readr)
+library(XML)
+library(stringr)
+library(sjmisc)
+library(dplyr)
+library(modelr)
+library(broom)
+library(purrr)
+library(leaps)
+library(kableExtra)
+library(ggrepel)
+library(gridExtra)
+bgg.orginal = read_csv("bgg.csv", col_names = T) 
+MAE.func= function(actual,predict){
+  res= actual-predict
+  mae=mean(abs(res),na.rm=T)
+  return(mae)
+}
+```
+
+```{r, include=FALSE}
+data = bgg.orginal %>%
+  filter(
+    # Removes observations that are incorrectly recorded
+    min_players<=max_players, # The maximum number of recommended players cannot logically be less than the minimum number of recommended players
+    min_time<=max_time, # The maximum estimated play time cannot logically be less than the minimum estimated play time
+    between(weight, 1, 5), # Weight is calculated by averaging votes from a scale of 1-5, thus we remove observations where the weight is less than 1 or greater than 5.
+    # Removes "games" that stand in as miscellaneous categories for the data; These are not board games; They only act as generalized placeholders and thus are irrelevant to our analysis
+    names!="Unpublished Prototype", 
+    names!="Miscellaneous Game Accessory", 
+    names!="Traditional Card Games", 
+    names!="Outside the Scope of BGG"
+    ) %>%  
+  select(!c(bgg_url, game_id, image_url, designer)) %>%  # The url variables cannot be used in a data analysis, and game_id & designer are not relevant to our data analysis
+  rename(Rank=rank,Name=names,Min_Players=min_players,Max_Players=max_players,Avg_Time=avg_time,Min_Time=min_time,Max_Time=max_time,Year_Pubd=year,Avg_Rating=avg_rating,Geek_Rating=geek_rating,Num_Votes=num_votes,Min_Age=age,mechanics=mechanic,Num_Owned=owned,categories=category,Complexity=weight) # Renames variables to accurately reflect their utility
+# Based on the data source, values of 0 for the following variables indicate that the publisher did not provide data or that data for the variable was unavailable; Since the data is numeric, a "0" entry might be misconstrued as an acceptable value, thus we convert 0 to NA to properly reflect this.
+data$Min_Players = replace(data$Min_Players, data$Min_Players==0, NA) # 0 players cannot play a game; this is missing data
+data$Max_Players = replace(data$Max_Players, data$Max_Players==0, NA) # 0 players cannot play a game; this is missing data
+data$Min_Age = replace(data$Min_Age, data$Min_Age==0, NA) # Someone who is 0 years old cannot play a game; this is missing data
+data$Year_Pubd = replace(data$Year_Pubd, data$Year_Pubd==0, NA) # These games have no confirmed initial publication date; this is unavailable data
+#Making new categories
+activity_cat = c("CityBuilding","Civilization","Educational","Maze","PartyGame","Puzzle","PikeandShot","Print&Play","Racing","TerritoryBuilding","Transportation")
+component_cat = c("CardGame","CollectibleComponents","Dice","Electronic","Miniatures")
+non_game_cat = c("AbstractStrategy","Book","ExpansionforBase-game","GameSystem")
+wargames_cat = c("Wargame","WorldWarI","WorldWarII","VietnamWar","Napoleonic","ModernWarfare","CivilWar","AmericanCivilWar","Post-Napoleonic","AmericanRevolutionaryWar","AmericanIndianWars","KoreanWar")
+skills_cat = c("Action/Dexterity","Bluffing","Deduction","Economic","Math","Medical","Number","Memory","Negotiation","Real-time","Trivia","WordGame")
+entertainment_media_cat = c("ComicBook/Strip","Movies/TV/Radiotheme","Music","Novel-based","Political","Sports","VideoGameTheme")
+thematic_cat=c("Adventure","AgeofReason","AmericanWest","Ancient","Animals","Arabian","Aviation/Flight","Children'sGame","Environmental","Exploration","Fantasy","Farming","Fighting","Horror","Humor","Industry/Manufacturing","Mafia","Mature/Adult","Medieval","Murder/Mystery","Mythology","Nautical","Pirates","Prehistoric","Religious","Renaissance","ScienceFiction","SpaceExploration","Spies/SecretAgents","Trains","Travel","Zombies")
+#Making new mechanics
+ip_mech = c("VariablePlayerPowers","Co-operativePlay","Partnerships","PlayerElimination","RolePlaying","Trading","Action/MovementProgramming","Voting","Acting","Singing")
+resource_mech = c("SetCollection","ActionPointAllowanceSystem","Auction/Bidding","WorkerPlacement","Pick-upandDeliver","StockHolding","CommoditySpeculation	","Betting/Wagering")
+card_mech = c("HandManagement","CardDrafting","Deck/PoolBuilding","Campaign/BattleCardDriven","TakeThat","Trick-taking")
+spacetime_mech = c("DiceRolling","AreaControl/AreaInfluence","ModularBoard","TilePlacement","Hex-and-Counter","AreaMovement","GridMovement","PointtoPointMovement","Route/NetworkBuilding","PatternBuilding","Roll/SpinandMove","AreaEnclosure","TimeTrack","Area-Impulse","CrayonRailSystem")
+strategy_mech = c("SimultaneousActionSelection","Simulation","PressYourLuck","SecretUnitDeployment","Memory","VariablePhaseOrder","PatternRecognition","Storytelling","Chit-PullSystem","Paper-and-Pencil","Rock-Paper-Scissors","LineDrawing")
+data = data %>% 
+  mutate("Activity_Game"=F,
+         "Component_Game"=F,
+         "Non-Game"=F,
+         "Wargame"=F,
+         "Skill_Game"=F,
+         "Entertainment_Media_Game"=F,
+         "Thematic_Game"=F,
+         "Interpersonal_Mechanic"=F,
+         "Resource_Mechanic"=F,
+         "Card_Mechanic"=F,
+         "Space-Time_Mechanic"=F,
+         "Abstract_Strategy_Mechanic"=F)
+for (i in 1:nrow(data)) {
+  #Categories
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),activity_cat),TRUE)) {
+    data$Activity_Game[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),component_cat),TRUE)) {
+    data$Component_Game[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),non_game_cat),TRUE)) {
+    data$`Non-Game`[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),wargames_cat),TRUE)) {
+    data$Wargame[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),skills_cat),TRUE)) {
+    data$Skill_Game[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),entertainment_media_cat),TRUE)) {
+    data$Entertainment_Media_Game[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$categories[i]," ",""),thematic_cat),TRUE)) {
+    data$Thematic_Game[i]=T
+  }
+  #Mechanics
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),ip_mech),TRUE)) {
+    data$Interpersonal_Mechanic[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),resource_mech),TRUE)) {
+    data$Resource_Mechanic[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),card_mech),TRUE)) {
+    data$Card_Mechanic[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),spacetime_mech),TRUE)) {
+    data$`Space-Time_Mechanic`[i]=T
+  }
+  if(str_contains(str_contains(str_replace_all(data$mechanics[i]," ",""),strategy_mech),TRUE)) {
+    data$Abstract_Strategy_Mechanic[i]=T
+  }
+}
+data = data %>%
+  select(!categories) %>% 
+  select(!mechanics) %>%
+  select(!Name) %>%
+  na.omit()%>%
+  mutate(Avg_Players=round((Max_Players+Min_Players)/2, digits=0)) %>% #create a variable for Avg_Players
+  filter(Year_Pubd>1500) %>% #excluding the games that were published before 1500, and therefore our models can only be used for the games that are published after 1500
+  mutate(Duration=2018-Year_Pubd) %>% #create a variable for duration
+  select(c(1,2,3,26,5,6,4,7,27,8,9,10,11:25))
+  
+glimpse(data)
+```
+
+# INTRODUCTION
+
+Board games have been a staple of leisure and household entertainment since before the modern era. Nearly everyone today has played a board game in some form or another, and for good reason; whether you want to dominate the real estate markets of Monopoly, simulate the strategies of war in a complex game of Chess, or simply idle away at work with a quick game of Tic-Tac-Toe, the board game genre offers an endless amount of recreation and pastime. 
+
+However, the vast assortment of board games available on the market (alongside their countless mechanical and strategic attributes) can lead to decision paralysis for an average board game buff just looking to find a new game to play. This experience, alongside knowing that board game collection can be quite an expensive investment, might lead consumers to simply give up on exploring new games. 
+
+To address this problem, our group decided to analyze two questions that we believe will assist board game enthusiasts to narrow their options and reconnect with the joys of discovering fresh board games to play. The first question we investigated was, “What is the best model we can create to predict the estimated average time it takes to play a board game?”. Similarly, our second question asked, “What is the best model we can create to predict the Average Rating of a board game?”. When shopping for board games, buyers tend to consider a game’s average rating and the average estimated time it takes to play. This is because the average rating generally indicates the game's level of engagement and value, while the average estimated playtime gives people a rough idea of the game’s suitability for a variety of occasions (such as during a lunch break, a birthday party, or even a competitive tournament). For an owner of our data set, the results of our analysis serve to help them predict these variables for newly released board games without having to survey the game’s limited player base or request reviews from professional board games appraisers. 
+
+In our paper, we take these variables a step further by hypothesizing that other (more obvious and readily available) variables might play a key role in determining the average rating and average playtime, and we hope to give buyers a better guide when shopping for their next board game. 
+
+
+# DATA
+
+We found our dataset on Kaggle, uploaded four years ago (2018) by a user named “MRPANTHERSON”. His profile indicates that he is a Software Engineer at Florida State, although the authenticity of this cannot be verified. In the description of the upload, MRPANTHERSON states that he retrieved the data from the website https://boardgamegeek.com/ through the site’s API. The original dataset contains 20 variables with 4,999 listed board games. Each observation/row represents the data for one individual board game. Using the BoardGameGeek website as our source, we cross-referenced each variable with its description on the website to determine its utility for our project. 
+
+Missing data were dropped from the dataset, alongside four placeholder observations that did not constitute as board games. Variables that included URLs to images and websites were removed, as well as the designer and name of the board game since they could not properly be used in our predictive analysis. We ended up with 27 total variables corresponding to 4,693 board games. The fifteen numeric variables are as follows: the Rank of the game based on the Geek Rating (decreasing); the Minimum, Maximum, and Average players recommended; the Minimum, Maximum, and Average estimated playtime (in minutes); the Year the game was published (up to 2018); the Duration the game has been publicly available up to 2018; the Average Rating decided by reviewers on the BGG website (increasing from 1-10); the Geek Rating created by BGG from standardizing the average rating; the Number of People that Voted on a game’s rating; the Minimum recommended player Age (in years); the Number of People that Own the game; and the Complexity of a game (increasing from 1-5). These variables are shown below for the top fifteen highest-ranked games.
+
+```{r, echo=FALSE, fig.align='center'}
+data1 = data %>% 
+  head(15) %>% 
+  select(!c(16:27)) %>% 
+  kbl(caption = "Numeric Board Game Data for the Top 15 Highest-Ranked Board Games") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), font_size = 16, fixed_thead=T, position="center") %>% 
+  kable_classic_2(full_width=F, html_font = "Cambria") %>% 
+  row_spec(0, font_size=18, bold=T, align=c("c")) %>% 
+  row_spec(0:15, color = "black") %>% 
+  column_spec(1:13, border_right="1px solid lavender") %>% 
+  column_spec(2, width="23em") %>%
+  scroll_box(width = "100%")
+data1
+```
+
+
+In addition to these variables, we created twelve more logical variables that check if a game falls under a specific category or has specific mechanics. These variables were created by grouping tags from the “category” and “mechanic” variables of the initial dataset and placing them under broader categories specified by the BGG website. The resulting category variables are as follows: Activity Games involve specific activities to play, Component Games require special components, Non-Games are not technically board games yet operate like them, Wargames include historical wars and war strategy, Skill Games require unique skills to play, Entertainment Media Games include pop culture and entertainment topics, and Thematic Games include games with specific themes other than those already covered. The resulting mechanic variables are as follows: Interpersonal Mechanics include games that require player-to-player interaction, Resource Mechanics include games with a point system or resource-based play, Card Mechanics include the use of a deck of cards, Space-Time Mechanics include the movement of pieces on a board or time-based activities, and Abstract Strategy Mechanics include games that require advanced strategies to operate properly. These variables are shown below in table format the top fifteen highest-ranked games. The frequency of categories and mechanics among their totals in the dataset is also shown below in percent form.
+
+```{r, echo=FALSE}
+categories = data.frame(categories=c("Activity_Game",
+                                     "Component_Game",
+                                     "Non-Game",
+                                     "Wargame",
+                                     "Skill_Game",
+                                     "Entertainment_Media_Game",
+                                     "Thematic_Game"),
+                        count=c(sum(data$Activity_Game),
+                                sum(data$Component_Game),
+                                sum(data$`Non-Game`),
+                                sum(data$Wargame),
+                                sum(data$Skill_Game),
+                                sum(data$Entertainment_Media_Game),
+                                sum(data$Thematic_Game)))
+
+mechanics = data.frame(mechanics=c("Interpersonal_Mechanic",
+                                     "Resource_Mechanic",
+                                     "Card_Mechanic",
+                                     "Space-Time_Mechanic",
+                                     "Abstract_Strategy_Mechanic"),
+                        count=c(sum(data$Interpersonal_Mechanic),
+                                sum(data$Resource_Mechanic),
+                                sum(data$Card_Mechanic),
+                                sum(data$`Space-Time_Mechanic`),
+                                sum(data$Thematic_Game)))
+
+categories = categories %>% 
+  mutate(percent=round((count/sum(count))*100,2))
+mechanics = mechanics %>% 
+  mutate(percent=round((count/sum(count))*100,2))
+```
+
+```{r, echo=FALSE, fig.height=6, fig.width=15}
+cat=ggplot(data=categories, mapping=aes(x="", y=percent, fill=categories)) +
+  geom_bar(stat="identity", width=1, size=1.1, color="black") +
+  coord_polar("y", start=0) + 
+  theme_void() +
+  geom_label(aes(x=1.2, label = paste0(percent,"%")),
+            position = position_stack(vjust = 0.5), show.legend=F, size=5, label.size=0.7) +
+  labs(x = NULL, y = NULL, title="Category Breakdown by Percentage", fill = NULL) +
+  theme(plot.title = element_text(size=30),
+        legend.title=element_text(size=18),
+        legend.text=element_text(size=12)) +
+  scale_fill_brewer(palette="Set1") +
+  guides(fill = guide_legend(title = "Category Type"))
+
+mech=ggplot(data=mechanics, mapping=aes(x="", y=percent, fill=mechanics)) +
+  geom_bar(stat="identity", width=1, size=1.1, color="black") +
+  coord_polar("y", start=0) +
+  theme_void() +
+  geom_label(aes(x=1.2, label = paste0(percent,"%")),
+            position = position_stack(vjust = 0.5), show.legend=F, size=5, label.size=0.7) +
+  labs(x = NULL, y = NULL, title="Mechanic Breakdown by Percentage", fill = NULL) +
+  theme(plot.title = element_text(size=30),
+        legend.title=element_text(size=18),
+        legend.text=element_text(size=12)) +
+  scale_fill_brewer(palette="Set2") +
+  guides(fill = guide_legend(title = "Mechanic Type"))
+
+data2 = data %>% 
+  head(15) %>% 
+  select(c(16:27)) %>% 
+  rename(Non_Game=`Non-Game`, Space_Time_Mechanic=`Space-Time_Mechanic`) %>% 
+  kbl(caption = "Logical Board Game Data for the Top 15 Highest-Ranked Board Games") %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), font_size = 12, fixed_thead=T, position="center") %>% 
+  kable_classic_2(full_width=F, html_font = "Cambria") %>%   
+  row_spec(0, font_size=16, bold=T, align=c("c")) %>% 
+  row_spec(0:15, color = "black") %>% 
+  column_spec(1:11, border_right="1px solid grey") %>% 
+  row_spec(1:15, align=c("c")) %>% 
+  column_spec(2, width="23em") %>%
+  column_spec(1:7, background="aliceblue") %>% 
+  column_spec(8:12, background = "mistyrose") %>% 
+  scroll_box(width = "100%")
+data2
+grid.arrange(cat, mech, nrow=1)
+```
+
+
+# RESULTS
+
+<strong>Part I</strong>
+
+To answer our first question, we first had to copy our dataset and remove the minimum/maximum/average estimated playtime variables, because these variables directly provided the time data that we were trying to predict. We also removed observations that consisted of outlier values for the average estimated playtime from the data. Our dataset now had 4,065 observations. We then used a step-wise regression to obtain subsets of relevant predictors for average time using the `regsubsets()` function. Basically, this process generated models by including/removing variables from the regression equation and calculating various statistical data for each subset. We decided to use the corresponding adjusted R square value as our coefficient of determination to choose our models. The adjusted R square coefficient essentially determines if the inclusion of a variable contributes to the accuracy of the model, which means that higher adjusted R square values indicate better models. We used the five highest adjusted R square values to choose five models. The models are as follows:
+
+### Model 1: 
+`Avg_Time` = `Rank` + `Min_Players` + `Max_Players` + `Year_Pubd` + `Num_Votes` + `Min_Age` + `Num_Owned` + `Complexity` + 
+                    `Activity_Game` + `Component_Game` + `Non-Game` + ``Wargame` + `Skill_Game` + `Entertainment_Media_Game` + 
+                    `Thematic_Game` + `Interpersonal_Mechanic` + `Resource_Mechanic` + `Card_Mechanic` + `Space-Time_Mechanic` + `Avg_Players`
+                    
+### Model 2: 
+`Avg_Time` = `Rank` + `Min_Players` + `Max_Players` + `Year_Pubd` + `Num_Votes` + `Min_Age` + `Num_Owned` + `Complexity` + 
+                  `Activity_Game` + `Component_Game` + `Non-Game` + `Wargame` + `Entertainment_Media_Game` + `Thematic_Game` + 
+                  `Interpersonal_Mechanic` + `Resource_Mechanic` + `Card_Mechanic` + `Space-Time_Mechanic` + `Avg_Players`
+
+### Model 3: 
+`Avg_Time` = `Rank` + `Min_Players` + `Max_Players` + `Year_Pubd` + `Num_Votes` + `Min_Age` + `Num_Owned` + `Complexity` + 
+                  `Activity_Game` + `Component_Game` + `Non-Game` + `Wargame` + `Skill_Game` + `Entertainment_Media_Game` + `Thematic_Game` + 
+                  `Interpersonal_Mechanic` + `Resource_Mechanic` + `Card_Mechanic` + `Space-Time_Mechanic` + `Avg_Players` + `Avg_Rating`
+
+### Model 4: 
+`Avg_Time` = `Min_Players` + `Max_Players` + `Year_Pubd` + `Min_Age` + `Complexity` + 
+                  `Activity_Game` + `Component_Game` + `Non-Game` + `Wargame` + `Skill_Game` + `Entertainment_Media_Game` + `Thematic_Game` + 
+                  `Interpersonal_Mechanic` + `Resource_Mechanic` + `Card_Mechanic` + `Space-Time_Mechanic` + `Avg_Players` + `Geek_Rating`
+
+### Model 5: 
+`Avg_Time` = `Min_Players` + `Max_Players` + `Year_Pubd` + `Min_Age` + `Complexity` + 
+                  `Activity_Game` + `Component_Game` + `Non-Game` + `Wargame` + `Entertainment_Media_Game` + `Thematic_Game` + 
+                  `Interpersonal_Mechanic` + `Resource_Mechanic` + `Card_Mechanic` + `Space-Time_Mechanic` + `Avg_Players` + `Geek_Rating`
+
+Shown below is a plot of the models alongside their corresponding adjusted R square values.
+
+```{r, echo=FALSE, warning=FALSE}
+#Removing outliers 
+Q <- quantile(data$Avg_Time, probs=c(.25, .75), na.rm = FALSE)
+iqr <- IQR(data$Avg_Time)
+up <-  Q[2]+1.5*iqr # Upper Range  
+low<- Q[1]-1.5*iqr # Lower Range
+data.avg.time<- subset(data, data$Avg_Time > (Q[1] - 1.5*iqr) & data$Avg_Time < (Q[2]+1.5*iqr))
+
+
+data.avg.time.1= data.avg.time %>%
+  select(.,-c( "Min_Time","Max_Time"))
+
+Avg_Time_Mod1= lm(Avg_Time ~ Rank + Min_Players + Max_Players + Year_Pubd + Num_Votes + Min_Age + Num_Owned + Complexity + 
+                  Activity_Game + Component_Game + `Non-Game` + Wargame + Skill_Game + Entertainment_Media_Game + Thematic_Game + 
+                  Interpersonal_Mechanic + Resource_Mechanic + Card_Mechanic + `Space-Time_Mechanic` + Avg_Players, data = data.avg.time.1)
+
+Avg_Time_Mod2= lm(Avg_Time ~ Rank + Min_Players + Max_Players + Year_Pubd + Num_Votes + Min_Age + Num_Owned + Complexity + 
+                  Activity_Game + Component_Game + `Non-Game` + Wargame + Entertainment_Media_Game + Thematic_Game + 
+                  Interpersonal_Mechanic + Resource_Mechanic + Card_Mechanic + `Space-Time_Mechanic` + Avg_Players, data = data.avg.time.1)
+
+Avg_Time_Mod3= lm(Avg_Time ~ Rank + Min_Players + Max_Players + Year_Pubd + Num_Votes + Min_Age + Num_Owned + Complexity + 
+                  Activity_Game + Component_Game + `Non-Game` + Wargame + Skill_Game + Entertainment_Media_Game + Thematic_Game + 
+                  Interpersonal_Mechanic + Resource_Mechanic + Card_Mechanic + `Space-Time_Mechanic` + Avg_Players + Avg_Rating, data = data.avg.time.1)
+
+Avg_Time_Mod4= lm(Avg_Time ~ Min_Players + Max_Players + Year_Pubd + Min_Age + Complexity + 
+                  Activity_Game + Component_Game + `Non-Game` + Wargame + Skill_Game + Entertainment_Media_Game + Thematic_Game + 
+                  Interpersonal_Mechanic + Resource_Mechanic + Card_Mechanic + `Space-Time_Mechanic` + Avg_Players + Geek_Rating, data = data.avg.time.1)
+
+Avg_Time_Mod5= lm(Avg_Time ~ Min_Players + Max_Players + Year_Pubd + Min_Age + Complexity + 
+                  Activity_Game + Component_Game + `Non-Game` + Wargame + Entertainment_Media_Game + Thematic_Game + 
+                  Interpersonal_Mechanic + Resource_Mechanic + Card_Mechanic + `Space-Time_Mechanic` + Avg_Players + Geek_Rating, data = data.avg.time.1)
+
+#Calculate the MAE for the 10 models,and create a table with the models' number and the coresponding MAEs, and adj r^2   
+data.avg.time.2= data.avg.time.1%>% 
+ add_predictions(Avg_Time_Mod1,var="Mod1")%>%
+  add_predictions(Avg_Time_Mod2,var="Mod2")%>%
+  add_predictions(Avg_Time_Mod3,var="Mod3")%>%
+  add_predictions(Avg_Time_Mod4,var="Mod4")%>%
+  add_predictions(Avg_Time_Mod5,var="Mod5")
+
+  
+  
+Model= c(1:5)
+MAE=c(round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod1), digits=6),
+       round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod2), digits=6),
+       round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod3), digits=6),
+       round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod4), digits=6),
+       round(MAE.func(data.avg.time.2$Avg_Time, data.avg.time.2$Mod5), digits=6))
+
+AdjR.squared= c(round(summary(Avg_Time_Mod1)$adj.r.squared, digits=6),
+        round(summary(Avg_Time_Mod2)$adj.r.squared,digits=6),
+        round(summary(Avg_Time_Mod3)$adj.r.squared,digits=6),
+        round(summary(Avg_Time_Mod4)$adj.r.squared,digits=6),
+        round(summary(Avg_Time_Mod5)$adj.r.squared,digits=6))
+
+avg.time.Final= data.frame(Model, MAE,AdjR.squared )
+adjR_table= avg.time.Final %>%
+  arrange(desc(AdjR.squared))
+MAE_table= avg.time.Final %>%
+  arrange(MAE)
+```
+
+```{r, echo=FALSE, fig.align='center'}
+# ggplot(data=MAE_table, aes(x=as.factor(Model), y=MAE)) +
+#   geom_col(fill="deepskyblue1") +
+#   geom_point(size=3, show.legend = F, color="firebrick1") +
+#   geom_line(aes(x=Model, y=MAE)) +
+#   geom_label(aes(label=MAE, y=MAE+0.003), color="black") +
+#   labs(title="MAE by Model Number",
+#        x="Model Number",
+#        y="MAE") +
+#   theme(plot.title=element_text(size = 23),
+#         plot.caption=element_text(color="gray30", face="italic"),
+#         axis.title=element_text(size=13.5),
+#         axis.text=element_text(color="gray25")) +
+#   coord_cartesian(ylim=c(16.725,16.775)) 
+
+ggplot(data=adjR_table, aes(x=as.factor(Model), y=AdjR.squared)) +
+  geom_col(fill="firebrick1") +
+  geom_line(aes(x=Model, y=AdjR.squared)) +
+  geom_point(size=3, show.legend = F, color="deepskyblue1") +
+  geom_label(aes(label=AdjR.squared, y=AdjR.squared+0.00003), color="black") +
+  labs(title="Adjusted R^2 by Model Number",
+       x="Estimated Average Playtime Model Number",
+       y="Adjusted R^2") +
+  theme(plot.title=element_text(size = 23),
+        plot.caption=element_text(color="gray30", face="italic"),
+        axis.title=element_text(size=13.5),
+        axis.text=element_text(color="gray25"))+
+  coord_cartesian(ylim=c(0.5695,0.57)) 
+```
+
+We rounded to 6 digits since there is clearly very little difference in the adjusted R square values, indicating that the differences are not significant. Due to this, we decided to keep all five models for further testing. We wanted to see how well they actually predicted the average estimated playtime, so we decided to perform a 15-fold cross-validation analysis using each model. This meant that we tested our models on our data by splitting it into 15 groups (Since 4,065 is divisible by 15, 15 folds create even groups), using a portion of each group to train the model, and then testing the model against the remaining data within the group. We then calculated the MAEs (Mean Absolute Errors) for each model. The MAE is the average of the absolute differences between the actual and predicted average estimated playtimes for each game, implying that the model with the lowest MAE is the most accurate. The results are shown below.
+
+```{r, echo=FALSE, eval=FALSE}
+MAE.func1 = function(v) {
+  s = 0
+  for (i in 1:length(v)) {
+    s = s + abs(v[i])
+  }
+  return(s/length(v))
+}
+
+timedata = data.avg.time.2
+
+timedata = timedata[sample(1:nrow(timedata)),]
+time_resids_1 = c()
+time_resids_2 = c()
+time_resids_3 = c()
+time_resids_4 = c()
+time_resids_5 = c()
+
+
+for (k in 1:15) {
+  timetestindices = c(round((k-1)/15*nrow(timedata)+1):round(k/15*nrow(timedata)))
+  timetestdata = timedata[timetestindices,]
+  timetraindata = timedata[-timetestindices,]
+  
+  time_model_1 = lm(Avg_Time ~ Rank + Min_Players + Max_Players + Year_Pubd + Num_Votes + Min_Age + Num_Owned + Complexity + 
+                  Activity_Game + Component_Game + `Non-Game` + Wargame + Skill_Game + Entertainment_Media_Game + Thematic_Game + 
+                  Interpersonal_Mechanic + Resource_Mechanic + Card_Mechanic + `Space-Time_Mechanic` + Avg_Players, data =timetraindata)
+  time_resids_1 = append(time_resids_1,timetestdata$Avg_Rating-predict(time_model_1,timetestdata))
+  
+  time_model_2 = lm(Avg_Time ~ Rank + Min_Players + Max_Players + Year_Pubd + Num_Votes + Min_Age + Num_Owned + Complexity + 
+                  Activity_Game + Component_Game + `Non-Game` + Wargame + Entertainment_Media_Game + Thematic_Game + 
+                  Interpersonal_Mechanic + Resource_Mechanic + Card_Mechanic + `Space-Time_Mechanic` + Avg_Players, data =timetraindata)
+  time_resids_2 = append(time_resids_2,timetestdata$Avg_Rating-predict(time_model_2,timetestdata))
+  
+  time_model_3 = lm(Avg_Time ~ Rank + Min_Players + Max_Players + Year_Pubd + Num_Votes + Min_Age + Num_Owned + Complexity + 
+                  Activity_Game + Component_Game + `Non-Game` + Wargame + Skill_Game + Entertainment_Media_Game + Thematic_Game + 
+                  Interpersonal_Mechanic + Resource_Mechanic + Card_Mechanic + `Space-Time_Mechanic` + Avg_Players + Avg_Rating, data =timetraindata)
+  time_resids_3 = append(time_resids_3,timetestdata$Avg_Rating-predict(time_model_3,timetestdata))
+  
+  time_model_4 = lm(Avg_Time ~ Min_Players + Max_Players + Year_Pubd + Min_Age + Complexity + 
+                  Activity_Game + Component_Game + `Non-Game` + Wargame + Skill_Game + Entertainment_Media_Game + Thematic_Game + 
+                  Interpersonal_Mechanic + Resource_Mechanic + Card_Mechanic + `Space-Time_Mechanic` + Avg_Players + Geek_Rating, data =timetraindata)
+  time_resids_4 = append(time_resids_4,timetestdata$Avg_Rating-predict(time_model_4,timetestdata))
+  
+  time_model_5 = lm(Avg_Time ~ Min_Players + Max_Players + Year_Pubd + Min_Age + Complexity + 
+                  Activity_Game + Component_Game + `Non-Game` + Wargame + Entertainment_Media_Game + Thematic_Game + 
+                  Interpersonal_Mechanic + Resource_Mechanic + Card_Mechanic + `Space-Time_Mechanic` + Avg_Players + Geek_Rating, data =timetraindata)
+  time_resids_5 = append(time_resids_5,timetestdata$Avg_Rating-predict(time_model_5,timetestdata))
+}
+
+
+timekfold = data.frame(c(1:5), c(MAE.func1(time_resids_1),MAE.func1(time_resids_2),MAE.func1(time_resids_3),MAE.func1(time_resids_4),MAE.func1(time_resids_5)))
+colnames(timekfold) = c("Model Number","15-fold MAE")
+```
+
+```{r, include=FALSE}
+timefold = read_csv("timefold.csv") 
+```
+
+```{r, echo=FALSE}
+timefold1 = timefold %>% 
+  kbl() %>%
+  kable_styling(bootstrap_options = c("hover","condensed"), font_size = 15, fixed_thead=T, position = "center") %>% 
+  kable_classic(full_width=F, html_font = "Cambria") %>% 
+  row_spec(0, font_size=18, bold=T, align=c("c")) %>% 
+  row_spec(1:5, align=c("c")) 
+timefold1
+```
+
+From the table, it is clear that Model 1 is the best model for predicting the average estimated time of a board game, as it has the lowest MAE. However, the difference in MAEs is so low that we cannot claim that Model 1 is significantly superior to the other models. 
+
+<strong>Part II</strong>
+
+For our second question, we copied our original dataset and removed the Rank and Geek Rating variables since they directly provided a portion of the rating data we were trying to predict. Additionally, observations with Average Rating outliers were also removed, leading our data to contain 4,668 observations. We then graphed the binary variables (mechanics and categories) to inspect which variables seem to have a relationship with avg_rating. We found out that the genre of game that mattered most to the rating was "Wargame" - which had much higher than average avg rating scores based on the variation. 
+
+```{r, echo=FALSE, fig.height=7, fig.width=15,fig.align='center', warning=FALSE}
+Q <- quantile(data$Avg_Rating, probs=c(.25, .75), na.rm = FALSE)
+iqr <- IQR(data$Avg_Rating)
+up <-  Q[2]+1.5*iqr # Upper Range  
+low<- Q[1]-1.5*iqr # Lower Range
+data.avg.rating.1<- subset(data, data$Avg_Rating > (Q[1] - 1.5*iqr) & data$Avg_Rating < (Q[2]+1.5*iqr))
+
+gathered <- data.avg.rating.1 %>% 
+  head(100) %>% 
+  select(Avg_Rating, c(16:27)) %>% 
+  as_data_frame() %>%
+  gather(key = "variable", value = "value", -Avg_Rating)
+
+ggplot(gathered, aes(x = value, y = Avg_Rating)) +
+  geom_boxplot(aes(color=variable), show.legend=F, size=.75) +
+  labs(x="FALSE/TRUE",
+       y="Average Rating",
+       title="Distribution of Average Rating for Categories and Mechanics")+
+  facet_wrap(~variable, nrow=2) +
+  theme(plot.title=element_text(size = 20))
+```
+
+After that, we performed another step-wise regression to obtain subsets of predictors that best explain the variability of average rating. The top five models with the highest adjusted R square had similar sets of predictors, and are as follows:
+
+### Model 1:
+`Avg_Rating` = `Min_Players` + `Max_Players` + `Avg_Players` + `Min_Time` + `Max_Time` + `Duration` + `Skill_Game` + `Activity_Game` +
+                    `Num_Votes` + `Num_Owned` + `Complexity` + `Component_Game` + `Non-Game` + `Wargame` + `Entertainment_Media_Game` + `Space-Time_Mechanic` +
+                    `Thematic_Game` + `Interpersonal_Mechanic` + `Interpersonal_Mechanic` + `Card_Mechanic` + `Abstract_Strategy_Mechanic`
+
+### Model 2:
+`Avg_Rating` = `Min_Players` + `Max_Players` + `Avg_Players` + `Min_Time` + `Max_Time` + `Duration` + `Skill_Game` + `Activity_Game` +
+                    `Num_Votes` + `Num_Owned` + `Complexity` + `Component_Game` + `Non-Game` + `Wargame` + `Entertainment_Media_Game` +
+                    `Thematic_Game` + `Interpersonal_Mechanic` + `Interpersonal_Mechanic` + `Card_Mechanic` + `Abstract_Strategy_Mechanic`
+
+### Model 3
+`Avg_Rating` = `Min_Players` + `Max_Players` + `Avg_Players` + `Min_Time` + `Max_Time` + `Duration` + 
+                    `Num_Votes` + `Num_Owned` + `Complexity` + `Component_Game` + `Entertainment_Media_Game` +
+                    `Thematic_Game` + `Interpersonal_Mechanic` + `Interpersonal_Mechanic` + `Card_Mechanic` + `Abstract_Strategy_Mechanic`
+
+### Model 4:
+`Avg_Rating` = `Min_Players` + `Max_Players` + `Avg_Players` + `Min_Time` + `Max_Time` + `Duration` + `Activity_Game` + 
+                    `Num_Votes` + `Num_Owned` + `Complexity` + `Component_Game` + `Non-Game` + `Wargame` + `Entertainment_Media_Game` +
+                    `Thematic_Game` + `Interpersonal_Mechanic` + `Interpersonal_Mechanic` + `Card_Mechanic` + `Abstract_Strategy_Mechanic`
+
+### Model 5:
+`Avg_Rating` = `Min_Players` + `Max_Players` + `Avg_Players` + `Min_Time` + `Max_Time` + `Duration` + 
+                    `Num_Votes` + `Num_Owned` + `Complexity` + `Component_Game` + `Non-Game` + `Wargame` + `Entertainment_Media_Game` +
+                    `Thematic_Game` + `Interpersonal_Mechanic` + `Interpersonal_Mechanic` + `Card_Mechanic` + `Abstract_Strategy_Mechanic`
+
+Shown below is a plot of the models alongside their corresponding adjusted R square values.
+```{r, include=FALSE}
+
+Avg.rating.Mod1= lm(Avg_Rating ~ Min_Players + Max_Players + Avg_Players + Min_Time + Max_Time + Duration + Skill_Game + Activity_Game +
+                    Num_Votes + Num_Owned + Complexity + Component_Game + `Non-Game` + Wargame + Entertainment_Media_Game + `Space-Time_Mechanic` +
+                    Thematic_Game + Interpersonal_Mechanic + Interpersonal_Mechanic + Card_Mechanic + `Abstract_Strategy_Mechanic`,
+                    data=data.avg.rating.1)
+
+Avg.rating.Mod2= lm(Avg_Rating ~ Min_Players + Max_Players + Avg_Players + Min_Time + Max_Time + Duration + Skill_Game + Activity_Game +
+                    Num_Votes + Num_Owned + Complexity + Component_Game + `Non-Game` + Wargame + Entertainment_Media_Game +
+                    Thematic_Game + Interpersonal_Mechanic + Interpersonal_Mechanic + Card_Mechanic + `Abstract_Strategy_Mechanic`,
+                    data=data.avg.rating.1)
+
+Avg.rating.Mod3= lm(Avg_Rating ~ Min_Players + Max_Players + Avg_Players + Min_Time + Max_Time + Duration + 
+                    Num_Votes + Num_Owned + Complexity + Component_Game + Entertainment_Media_Game +
+                    Thematic_Game + Interpersonal_Mechanic + Interpersonal_Mechanic + Card_Mechanic + `Abstract_Strategy_Mechanic`,
+                    data=data.avg.rating.1)
+
+Avg.rating.Mod4= lm(Avg_Rating ~ Min_Players + Max_Players + Avg_Players + Min_Time + Max_Time + Duration + Activity_Game + 
+                    Num_Votes + Num_Owned + Complexity + Component_Game + `Non-Game` + Wargame + Entertainment_Media_Game +
+                    Thematic_Game + Interpersonal_Mechanic + Interpersonal_Mechanic + Card_Mechanic + `Abstract_Strategy_Mechanic`,
+                    data=data.avg.rating.1)
+
+Avg.rating.Mod5= lm(Avg_Rating ~ Min_Players + Max_Players + Avg_Players + Min_Time + Max_Time + Duration + 
+                    Num_Votes + Num_Owned + Complexity + Component_Game + `Non-Game` + Wargame + Entertainment_Media_Game +
+                    Thematic_Game + Interpersonal_Mechanic + Interpersonal_Mechanic + Card_Mechanic + `Abstract_Strategy_Mechanic`,
+                    data=data.avg.rating.1)
+
+
+data.avg.rating.2= data.avg.rating.1%>% 
+ add_predictions(Avg.rating.Mod1,var="Mod1")%>%
+  add_predictions(Avg.rating.Mod2,var="Mod2")%>%
+  add_predictions(Avg.rating.Mod3,var="Mod3")%>%
+  add_predictions(Avg.rating.Mod4,var="Mod4")%>%
+  add_predictions(Avg.rating.Mod5,var="Mod5")
+  
+  
+  
+Avg_rating_Model_num= c(1:5)
+Avg_rating_MAE= c(round(MAE.func(data.avg.rating.2$Avg_Rating, data.avg.rating.2$Mod1),digits=6),
+       round(MAE.func(data.avg.rating.2$Avg_Rating, data.avg.rating.2$Mod2),digits=6),
+       round(MAE.func(data.avg.rating.2$Avg_Rating, data.avg.rating.2$Mod3),digits=6),
+       round(MAE.func(data.avg.rating.2$Avg_Rating, data.avg.rating.2$Mod4),digits=6),
+       round(MAE.func(data.avg.rating.2$Avg_Rating, data.avg.rating.2$Mod5), digits=6))
+Avg_rating_adjR= c(round(summary(Avg.rating.Mod1)$adj.r.squared, digits = 6), 
+       round(summary(Avg.rating.Mod2)$adj.r.squared,digits=6),
+       round(summary(Avg.rating.Mod3)$adj.r.squared,digits=6),
+       round(summary(Avg.rating.Mod4)$adj.r.squared,digits=6),
+       round(summary(Avg.rating.Mod2)$adj.r.squared,digits=6))
+avg.rating.Final= data.frame(Avg_rating_Model_num, Avg_rating_MAE,Avg_rating_adjR )
+adjR.table= avg.rating.Final %>%
+  arrange(Avg_rating_Model_num)
+MAE.table= avg.rating.Final %>%
+  arrange(Avg_rating_MAE)
+adjR.table
+```
+
+```{r, echo=FALSE, fig.align='center'}
+ggplot(data=adjR.table, aes(x=as.factor(Avg_rating_Model_num), y=Avg_rating_adjR)) +
+  geom_col(fill="deepskyblue1") +
+  geom_line(aes(x=Model, y=Avg_rating_adjR)) +
+  geom_point(size=3, show.legend = F, color="firebrick1") +
+  geom_label(aes(label=Avg_rating_adjR, y=Avg_rating_adjR+0.0005), color="black") +
+  labs(title="Adjusted R^2 by Model Number",
+       x="Average Rating Model Number",
+       y="Adjusted R^2") +
+  theme(plot.title=element_text(size = 23),
+        plot.caption=element_text(color="gray30", face="italic"),
+        axis.title=element_text(size=13.5),
+        axis.text=element_text(color="gray25"))+
+  coord_cartesian(ylim=c(0.370,0.378))
+```
+
+We again rounded to 6 digits due to the minimal variation in adjusted R square values. While model 3 is clearly inferior to the others (due to the exclusion of the Wargames variable), we decided that the adjusted r square differences were not significant enough to completely remove the model from further testing. Due to this, we decided to keep all five models for cross-validation analysis. Since our data had 4,668 observations, we chose to do a 12-fold cross validation (4,668 is evenly divisible by 12). We then calculated the MAEs for each model. The results are shown below.
+
+```{r, include=FALSE}
+MAE.func1 = function(v) {
+  s = 0
+  for (i in 1:length(v)) {
+    s = s + abs(v[i])
+  }
+  return(s/length(v))
+}
+ratingdata = data.avg.rating.1
+
+ratingdata = ratingdata[sample(1:nrow(ratingdata)),]
+rating_resids_1 = c()
+rating_resids_2 = c()
+rating_resids_3 = c()
+rating_resids_4 = c()
+rating_resids_5 = c()
+
+
+for (k in 1:12) {
+  ratingtestindices = c(round((k-1)/12*nrow(ratingdata)+1):round(k/12*nrow(ratingdata)))
+  ratingtestdata = ratingdata[ratingtestindices,]
+  ratingtraindata = ratingdata[-ratingtestindices,]
+  
+  rating_model_1 = lm(Avg_Rating ~ Min_Players + Max_Players + Avg_Players + Min_Time + Max_Time + Duration + Skill_Game + Activity_Game +
+                    Num_Votes + Num_Owned + Complexity + Component_Game + `Non-Game` + Wargame + Entertainment_Media_Game + `Space-Time_Mechanic` +
+                    Thematic_Game + Interpersonal_Mechanic + Interpersonal_Mechanic + Card_Mechanic + `Abstract_Strategy_Mechanic`,
+                    data=ratingtraindata)
+  rating_resids_1 = append(rating_resids_1,ratingtestdata$Avg_Rating-predict(rating_model_1,ratingtestdata))
+  
+  rating_model_2 = lm(Avg_Rating ~ Min_Players + Max_Players + Avg_Players + Min_Time + Max_Time + Duration + Skill_Game + Activity_Game +
+                    Num_Votes + Num_Owned + Complexity + Component_Game + `Non-Game` + Wargame + Entertainment_Media_Game +
+                    Thematic_Game + Interpersonal_Mechanic + Interpersonal_Mechanic + Card_Mechanic + `Abstract_Strategy_Mechanic`,
+                    data=ratingtraindata)
+  rating_resids_2 = append(rating_resids_2,ratingtestdata$Avg_Rating-predict(rating_model_2,ratingtestdata))
+  
+  rating_model_3 = lm(Avg_Rating ~ Min_Players + Max_Players + Avg_Players + Min_Time + Max_Time + Duration + 
+                    Num_Votes + Num_Owned + Complexity + Component_Game + Entertainment_Media_Game +
+                    Thematic_Game + Interpersonal_Mechanic + Interpersonal_Mechanic + Card_Mechanic + `Abstract_Strategy_Mechanic`,
+                    data=ratingtraindata)
+  rating_resids_3 = append(rating_resids_3,ratingtestdata$Avg_Rating-predict(rating_model_3,ratingtestdata))
+  
+  rating_model_4 = lm(Avg_Rating ~ Min_Players + Max_Players + Avg_Players + Min_Time + Max_Time + Duration + Activity_Game + 
+                    Num_Votes + Num_Owned + Complexity + Component_Game + `Non-Game` + Wargame + Entertainment_Media_Game +
+                    Thematic_Game + Interpersonal_Mechanic + Interpersonal_Mechanic + Card_Mechanic + `Abstract_Strategy_Mechanic`,
+                    data=ratingtraindata)
+  rating_resids_4 = append(rating_resids_4,ratingtestdata$Avg_Rating-predict(rating_model_4,ratingtestdata))
+  
+  rating_model_5 = lm(Avg_Rating ~ Min_Players + Max_Players + Avg_Players + Min_Time + Max_Time + Duration + 
+                    Num_Votes + Num_Owned + Complexity + Component_Game + `Non-Game` + Wargame + Entertainment_Media_Game +
+                    Thematic_Game + Interpersonal_Mechanic + Interpersonal_Mechanic + Card_Mechanic + `Abstract_Strategy_Mechanic`,
+                    data=ratingtraindata)
+  rating_resids_5 = append(rating_resids_5,ratingtestdata$Avg_Rating-predict(rating_model_5,ratingtestdata))
+}
+
+
+ratingskfold = data.frame(c(1:5), c(MAE.func1(rating_resids_1),MAE.func1(rating_resids_2),MAE.func1(rating_resids_3),MAE.func1(rating_resids_4),MAE.func1(rating_resids_5)))
+colnames(ratingskfold) = c("Ratings Model Number","12-fold MAE")
+```
+
+```{r, include=FALSE}
+# write.table(ratingskfold, file = "ratingsfold.csv",
+#             sep = ",", row.names = F)
+ratingsfold = read_csv("ratingsfold.csv")
+```
+
+```{r, echo=FALSE}
+ratingsfold1 = ratingsfold %>% 
+  kbl() %>%
+  kable_styling(bootstrap_options = c("hover","condensed"), font_size = 15, fixed_thead=T, position = "center") %>% 
+  kable_classic(full_width=F, html_font = "Cambria") %>% 
+  row_spec(0, font_size=18, bold=T, align=c("c")) %>% 
+  row_spec(1:5, align=c("c"))
+ratingsfold1
+```
+
+From the table, it is clear that Model 1 is the best model for predicting the average estimated time of a board game, as it has the lowest MAE. However, the difference in MAEs is so low that we cannot claim that Model 1 is significantly superior to the other models.
+
+# CONCLUSION
+
+For our first question, we determined that the best model to predict the estimated average playtime of a board game is: 
+`Avg_Time` = `Rank` + `Min_Players` + `Max_Players` + `Year_Pubd` + `Num_Votes` + `Min_Age` + `Num_Owned` + `Complexity` +  `Activity_Game` + `Component_Game` + `Non-Game` + `Wargame` + `Skill_Game` + `Entertainment_Media_Game` + `Thematic_Game` + `Interpersonal_Mechanic` + `Resource_Mechanic` + `Card_Mechanic` + `Space-Time_Mechanic` + `Avg_Players`
+This model had an adjusted R square value of 0.569909 and a 15-fold cross validation MAE of 50.19927, and was not significantly superior to the others we created (we did not expect it to  be significantly superior, since we used very similar regressors for each model). The adjusted R square value indicate that the regressors account for about 57% of the variance in estimated average playtime, adjusted for the number of total regressors.  The MAE value indicates that our model is off by about an average of 50 minutes when predicting the average estimated playtime. These values are unexpected, as we hoped our results would create a better model overall. Our original goal was to develop a model that allows board game consumers to estimate the average amount of time it would take for them to play newly released games. However, the model that we developed has some variables that would be difficult to easily obtain for new games. These variables include `Num_Owned`, `Num_Votes`, `Complexity`, and `Rank`. While it is relatively simple to find information like the mechanics and categories for a board game on its packaging, the variables stated above require data from the player base of the game, which would be very limited for new games. Additionally, even with these variables taken into account, our model is off by about 50 minutes on average, which prevents consumers from effectively using it to estimate their average playtime since a 50 minute error is too significant for practical application. However, if these variables can be taken into account for a game that has an extremely large predicted estimated average play time, an error of 50 minutes is then less significant, since the game itself is already incredibly long to play. Furthermore, we noticed that the `Duration` and `Abstract_Strategy_Game` category variables were excluded from all five of our models, indicating that abstract strategy games alongside the time a game has been on the market generally do not affect the estimated play time of a game. 
+
+For our second question, we determined that the best model to predict the average rating of a board game is: 
+`Avg_Rating` = `Min_Players` + `Max_Player`s + `Avg_Players` + `Min_Time` + `Max_Time` + `Duration` + `Skill_Game` + `Activity_Game` +  `Num_Votes` + `Num_Owned` + `Complexity` + `Component_Game` + `Non-Game` + `Wargame` + `Entertainment_Media_Game` + `Space-Time_Mechanic` + `Thematic_Game` + `Interpersonal_Mechanic` + `Interpersonal_Mechanic` + `Card_Mechanic` + `Abstract_Strategy_Mechanic`
+This model had an adjusted R square value of 0.377137 and a 12-fold cross validation MAE of 0.3357628, and was not significantly superior to the others we created (we did not expect it to be significantly superior, since we used very similar regressors for each model). The adjusted R square value indicate that the regressors account for about 38% of the variance in average rating, adjusted for the number of total regressors.  The MAE value indicates that our model is off by about an average of 0.336 rating points when predicting the average rating. While our adjusted R square values are lower than that for the estimated average time model, our relative MAE is significantly better, as an error of about 0.336 rating points on a 10 point scale is pretty favorable for the predictive model. However, this model yet again has variables that would be difficult for an average board game consumer to obtain for new games; namely `Num_Owned`, `Num_Votes`, and `Complexity`. Regardless of this, we were expecting results to be about this accurate due to the complexity of the modeling involved, and we are positive this model could be realistically used by board game enthusiasts determine the quality of new games given that they have access to the game’s estimated difficulty, number of owners, and number of people willing to rate it. In addition, we found that the `Wargames` category was relatively significant in predicting the average rating of a game, suggesting that games that involve war strategies or have historical war subjects result in better average rating predictions. Furthermore, we noticed that the `Year_Pubd` and `Min_Age` variables were excluded from all five of our models, indicating that year of publication and the minimum recommended player age of a game generally does not affect its average rating.
+
+While our average estimated time model was unrealistic for practical use, our average rating model fared much better. We hope that others who see this analysis can improve on our models someday by compiling data that is proven to be readily accessible to consumers of board games, which would greatly help improve the accuracy of these models. Additionally, since we only used the adjusted R square values as our coefficient of determination when performing our regression as well as the MAE as our error statistic when performing the cross-validation, further models should explore other deterministic and error statistics (such as BIC and MSE) to improve upon our analysis. There is a the real possibility that these changes would provide better models and resulting statistics that more suitable for board games as a whole.
+
+We hope our analysis has inspired renewed engagement with statistical modelling as well as the board game genre, and we are optimistic in their continued success. In parting, we greatly encourage new admirers and longtime fans alike to support the industry and continue exploring what the genre has to offer.
+
+
+
+
